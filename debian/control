@@ -2,7 +2,7 @@ Source: cz-xen-utils
 Section: admin
 Priority: optional
 Maintainer: Bill MacAlliser <bill@ca-zephyr.org>
-Build-Depends: debhelper (>= 8), perl, perltidy, libappconfig-perl,
+Build-Depends: debhelper (>= 9), perl, perltidy, libappconfig-perl,
  libipc-run-perl, libnet-dns-perl, libnet-remctl-perl,
  libauthen-krb5-perl
 Standards-Version: 3.9.4

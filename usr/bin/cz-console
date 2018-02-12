@@ -76,7 +76,7 @@ print "opt_toolset: $opt_toolset\n";
 # Confirm that the VM specified is correct and remember
 # the id just in case.
 my $id;
-my @lines = `$opt_toolset list`;
+my @lines      = `$opt_toolset list`;
 my $vm_pattern = $vm;
 $vm_pattern =~ s/[.]/[.]/xmsg;
 for my $z (@lines) {
@@ -85,7 +85,7 @@ for my $z (@lines) {
     }
 }
 if (!$id) {
-    die ("Virtual machine ($vm) not found");
+    die("Virtual machine ($vm) not found");
 }
 
 # Pick the console interface by toolset
@@ -99,15 +99,15 @@ if ($opt_toolset =~ /xm$/xms) {
         }
     }
     if (!$dev) {
-        die ("control device no found for $vm");
+        die("control device no found for $vm");
     }
     print "Using $dev --- Press return to access control.\n";
     print "CNTRL-a q RETURN to escape console session.\n";
-    exec ("minicom --noinit -w --ptty=$dev");
+    exec("minicom --noinit -w --ptty=$dev");
 } elsif ($opt_toolset =~ /\/xl$/xms) {
     print "Executing: xl console $vm\n";
     print "Entering console, use ^] to exit console.\n";
-    exec ("xl console $vm");
+    exec("xl console $vm");
     print "\n";
 }
 

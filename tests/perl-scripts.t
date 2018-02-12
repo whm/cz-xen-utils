@@ -13,7 +13,6 @@ for my $script (@script_list) {
     my $cmd = "PERLLIB=../usr/share/perl5 $s";
 
     $out = `$cmd --help 2>&1`;
-    print "$out\n";
     if (!ok($out =~ /^Usage/, "$script Help Switch")) {
         `$cmd --help`;
     }

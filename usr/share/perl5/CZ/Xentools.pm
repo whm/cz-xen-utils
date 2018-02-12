@@ -16,9 +16,9 @@ BEGIN {
 
     our @ISA    = qw(Exporter);
     our @EXPORT = qw(
-                     create_ticket_cache
-                     destroy_ticket_cache
-                     );
+      create_ticket_cache
+      destroy_ticket_cache
+    );
 
     our $VERSION = '1';
 
@@ -42,12 +42,13 @@ sub create_ticket_cache {
     Authen::Krb5::init_ets();
     my $client = Authen::Krb5::parse_name($CONF->krb_principal);
     my $server = Authen::Krb5::parse_name($tgt);
-    my $cc = Authen::Krb5::cc_resolve($tgtEnv);
+    my $cc     = Authen::Krb5::cc_resolve($tgtEnv);
     $cc->initialize($client);
     my $kt = Authen::Krb5::kt_resolve($CONF->krb_keytab);
-    Authen::Krb5::get_in_tkt_with_keytab($client,$server,$kt,$cc)
-        or die 'ERROR: ' . Authen::Krb5::error() 
-               . " while getting Kerberos ticket";
+    Authen::Krb5::get_in_tkt_with_keytab($client, $server, $kt, $cc)
+      or die 'ERROR: '
+      . Authen::Krb5::error()
+      . " while getting Kerberos ticket";
     $ENV{KRB5CCNAME} = $tgtEnv;
     return;
 }
@@ -63,7 +64,7 @@ sub destroy_ticket_cache {
     return;
 }
 
-END {}
+END { }
 
 1;
 

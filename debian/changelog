@@ -1,0 +1,228 @@
+cz-xen-utils (29) unstable; urgency=medium
+
+  * Rename the package.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Fri, 09 Feb 2018 09:21:28 -0800
+
+stanford-server-xen (28) unstable; urgency=medium
+
+  * Correct handling of compression in restore operations in su-xen-backup.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Tue, 30 Jan 2018 23:31:48 -0800
+
+stanford-server-xen (27) unstable; urgency=medium
+
+  * Correct date display when listing backups.
+  * Add a sleep just before rebooting a VM that has been LVM snapshoted.
+  * Display command output when backuping up a VM.
+  * Support multiple types of compression in su-xen-backup.
+  * Add the --example switch to display an example configuration file.
+  * Clean out of backups when making a new backup.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sun, 01 Oct 2017 14:15:34 -0700
+
+stanford-server-xen (26) unstable; urgency=medium
+
+  * Update backup to backup all disks associated with a virtual machine.
+  * Use lvm snapshots when backup up a VM.
+  * Turn the tests back on and remove the dependencies test.
+  * Add the list command to su-xen-backup to display current backups.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sat, 30 Sep 2017 18:57:22 -0700
+
+stanford-server-xen (25) unstable; urgency=medium
+
+  * Default to building Paravirtualized guests.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Mon, 20 Feb 2017 14:24:10 -0800
+
+stanford-server-xen (24) unstable; urgency=low
+
+  * Correct a bug in the find command that was incorrectly lists hosts.
+  * Add the --force command to allow destroying guests whose configuration 
+    file has been deleted.  This should not happen, but currently when it 
+    does the xen guest is not touchable.
+  * When delete'ing a guest destroy it first before deleting the configuration 
+    file.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 20 May 2015 16:27:53 -0700
+
+stanford-server-xen (23) unstable; urgency=low
+
+  * Restructure the shell command processing to use a command routine that
+    logs commands using syslog.
+  * Add in a --confirm switch for VM deletions to avoid confusion with the 
+    destroy command.
+
+ -- Bill MacAllister <whm@stanford.edu>  Fri, 24 Oct 2014 18:44:41 -0700
+
+stanford-server-xen (22) unstable; urgency=low
+
+  * Perl tidy clean up of su-xen.
+  * Change to default to noswap when creating a VM.
+  * Correct processing of the --swapsize switch.
+  * Correct units display in help message.
+  * Add --noswap switch.
+  * Use xl to display the amount of free memory.
+  * Change default memory size to 4Gb.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 02 Apr 2014 18:34:01 -0700
+
+stanford-server-xen (21) unstable; urgency=low
+
+  * Regression bug fix.  Add Stanford::Xentools to su-xen-backup.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 26 Mar 2014 15:14:16 -0700
+
+stanford-server-xen (20) unstable; urgency=low
+
+  * Add find to su-xen.  This searches for xen systems in a cluster 
+    of xen servers using remctl.
+  * Add a module to hold support routines.
+  * Correct check on swapsize units.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 26 Mar 2014 09:31:43 -0700
+
+stanford-server-xen (19) unstable; urgency=low
+
+  * Allow options to be specified when mounting a VMs disk in su-xen
+    script.
+  * Mount VM disk read only during backuup and disable atime updating, and
+    journal ordering when restoring in su-xen-backup.
+
+ -- Bill MacAllister <whm@stanford.edu>  Sun, 23 Feb 2014 11:24:32 -0800
+
+stanford-server-xen (18) unstable; urgency=low
+
+  * Add support for processing lists of virtual machines for all
+    su-xen-backup commands.
+  * Add the migrate command to su-xen-backup to perform backup, copy, and
+    restore for a list of VMs.
+
+ -- Bill MacAllister <whm@stanford.edu>  Fri, 14 Feb 2014 13:10:48 -0800
+
+stanford-server-xen (17) unstable; urgency=low
+
+  * Correct path parsing in su-xen-backup.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 12 Feb 2014 02:42:12 -0800
+
+stanford-server-xen (16) unstable; urgency=low
+
+  * Change su-xen-backup to request a graceful shutdown of the system 
+    when performing a backup.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 12 Feb 2014 02:09:46 -0800
+
+stanford-server-xen (15) unstable; urgency=low
+
+  * Change defaults in su-xen-backup to never boot a system after
+    a backup or restore opertaion.  Added the --boot option to allow
+    overriding the default.
+  * Use the value out of the xen-tools configuration file for the
+    volume group on the server if it is available.  Otherwise use
+    the value in the lvm file created by the backup.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 12 Feb 2014 01:13:59 -0800
+
+stanford-server-xen (14) unstable; urgency=low
+
+  * Add su-xen-backup.  The script implements VM backup, VM restore,
+    and VM backup copy between hosts.
+    system .cfg file to the backup directory, and restarts the VM.
+  * Rename free command to freedisk.
+  * Add the freemem command to display memory allocation summary.
+
+ -- Bill MacAllister <whm@stanford.edu>  Sun, 09 Feb 2014 00:58:09 -0800
+
+stanford-server-xen (13) UNRELEASED; urgency=low
+
+  * Changes summary help for listdisks.
+
+ -- Bill MacAllister <whm@stanford.edu>  Fri, 02 Aug 2013 11:11:32 -0700
+
+stanford-server-xen (11) unstable; urgency=low
+
+  * Add the 'free' action to su-xen to display the sizes of the
+    LVM volume groups.
+
+ -- Bill MacAllister <whm@stanford.edu>  Tue, 30 Jul 2013 14:36:14 -0700
+
+stanford-server-xen (10) unstable; urgency=low
+
+  * Hack to add support for xl toolset to su-console.  A module should be
+    created to hold the common routine find_toolset.
+  * Whitespace cleanup in su-xen.
+
+ -- Bill MacAllister <whm@stanford.edu>  Tue, 23 Jul 2013 00:57:40 -0700
+
+stanford-server-xen (9) unstable; urgency=low
+
+  * Allow the specification of architecture.
+  * Modify switch processing to allow specification of multiple IP
+    addresses.
+  * Add support for the xl toolset.
+
+ -- Bill MacAllister <whm@stanford.edu>  Sat, 13 Jul 2013 10:34:51 -0700
+
+stanford-server-xen (8) UNRELEASED; urgency=low
+
+  * Add the -w switch to the minicom command line in su-console to
+    ensure that console displays are wrapped and not truncated.
+
+ -- Bill MacAllister <whm@stanford.edu>  Tue, 11 Jun 2013 10:57:54 -0700
+
+stanford-server-xen (7) unstable; urgency=low
+
+  * Replace the use of inet_ntoa and inet_aton with Net::DNS.
+
+ -- Bill MacAllister <whm@stanford.edu>  Sat, 04 May 2013 00:26:21 -0700
+
+stanford-server-xen (6) unstable; urgency=low
+
+  * Update POD to include a description of role support.
+  * Add listroles and showrole actions.
+  * Add warning when a using the default role file specification and
+    the role file is not present.
+
+ -- Bill MacAllister <whm@stanford.edu>  Sat, 04 May 2013 00:24:34 -0700
+
+stanford-server-xen (5) unstable; urgency=low
+
+  * Add role support as an option that can be specified when creating
+    a new VM.  Default the role to a Stanford specific role.
+
+ -- Bill MacAllister <whm@stanford.edu>  Thu, 18 Apr 2013 18:42:00 -0700
+
+stanford-server-xen (4) unstable; urgency=low
+
+  * Cleanup su-xen with perltidy and perl critic.
+  * Add listdisks, mount, and umount to su-xen.
+  * Add support to copy base files into a xen vm disk to xu-xen.  This
+    is used when a new VM is created, but can be run anytime the VM
+    is down.
+
+ -- Bill MacAllister <whm@stanford.edu>  Thu, 11 Apr 2013 04:18:02 -0700
+
+stanford-server-xen (3) unstable; urgency=low
+
+  * Add destroy to crash a hung vm.
+  * Update missing pieces of the documentation.
+  * Add DNS lookup for new vm creation.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 12 Dec 2012 23:02:56 -0800
+
+stanford-server-xen (2) unstable; urgency=low
+
+  * Add support for specifying the installation method.
+  * Default the install method to rinse for centos and fedora-core.
+  * Update the help to the usage display more useful.
+  * Add basic test structure and initial test.
+
+ -- Bill MacAllister <whm@stanford.edu>  Wed, 20 Jun 2012 15:16:09 -0700
+
+stanford-server-xen (1) unstable; urgency=low
+
+  * Initial package including the scripts su-xen and su-console.
+
+ -- Bill MacAllister <whm@stanford.edu>  Fri, 27 Apr 2012 18:11:24 -0700

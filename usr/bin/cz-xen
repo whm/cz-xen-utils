@@ -1,0 +1,1324 @@
+#!/usr/bin/perl
+#
+# Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
+# Copyright 2016, 2017 Bill MacAllister <bill@ca-zephyr.org>
+#
+# Script to manage xen virtual hosts
+
+use AppConfig qw(:argcount :expand);
+use Carp;
+use File::Copy;
+use Getopt::Long;
+use IPC::Run qw( run timeout );
+use Net::DNS;
+use Net::Domain qw( hostfqdn );
+use Net::Remctl;
+use Pod::Usage;
+use Stanford::Xentools;
+use strict;
+use Sys::Syslog;
+
+my $opt_arch = 'amd64';
+my $opt_confirm;
+my $opt_debug;
+my $opt_disk   = '40Gb';
+my $opt_diskid = '-disk';
+my $opt_dist   = 'wheezy';
+my $opt_force;
+my $opt_help;
+my $opt_ip;
+my $opt_manual;
+my $opt_memory = '4Gb';
+my $opt_method;
+my $opt_moptions;
+my $opt_noswap;
+my $opt_password = 'vmPassWord';
+my $opt_pv       = 1;
+my $opt_role;
+my $opt_running;
+my $opt_setup    = '/etc/su-xen-setup.conf';
+my $opt_toolset  = '/usr/sbin/xm';
+my $opt_swapsize = '2Gb';
+
+my $DEBUG_TIME = time;
+my $ROLE_DIR   = '/etc/xen-tools/role.d';
+
+##############################################################################
+# Subroutines
+##############################################################################
+
+# output debugging information
+
+sub dbg {
+    (my $tmp) = @_;
+    my $now     = time;
+    my $elapsed = $now - $DEBUG_TIME;
+    print {*STDOUT} "$now ($elapsed) $tmp \n"
+      or croak("Problem writing debugging to STDOUT\n");
+    $DEBUG_TIME = $now;
+    return;
+}
+
+# output information
+
+sub msg {
+    (my $tmp) = @_;
+    print {*STDOUT} $tmp
+      or croak("Problem writing to STDOUT\n");
+    return;
+}
+
+# Validate the ip address that was input.
+
+sub validate_ip {
+    my ($ip_csv) = @_;
+    my @ip_list = split(/,/xms, $ip_csv);
+    foreach my $ip (@ip_list) {
+        if ($ip !~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/xms) {
+            warn "Invalid IP Address: $ip\n";
+            pod2usage(-verbose => 0);
+        }
+    }
+    return;
+}
+
+# Run a shell command line
+
+sub run_cmd {
+    my ($timeout, @cmd) = @_;
+
+    my $in;
+    my $out;
+    my $err;
+    my $cmd_line = 'Executing: ' . join(' ', @cmd);
+    msg("$cmd_line\n");
+    syslog("NOTICE", $cmd_line);
+    eval { run(\@cmd, \$in, \$out, \$err, timeout($timeout)); };
+    if ($@) {
+        if ($err) {
+            $err .= "\n";
+        }
+        $err .= "ERROR executing:$cmd_line\n";
+        $err .= $@;
+        croak "$err\n";
+    }
+    if ($opt_debug) {
+        if ($out) {
+            msg("$out\n");
+        }
+        if ($err) {
+            msg("INFO: $err\n");
+        }
+    }
+    return $out;
+}
+
+# Lookup IP address
+
+sub lookup_ip {
+    my ($host) = @_;
+    my $ip;
+    my $res   = Net::DNS::Resolver->new;
+    my $query = $res->search($host);
+    if ($query) {
+        foreach my $rr ($query->answer) {
+            if ($rr->type eq 'A') {
+                $ip = $rr->address;
+                last;
+            }
+        }
+    }
+    return $ip;
+}
+
+# Validate the domain configuration file
+
+sub validate_conf {
+    my ($vhost) = @_;
+    my $conf_file = "/etc/xen/${vhost}.cfg";
+    if (!-e $conf_file) {
+        msg("ERROR: $vhost not a Xen host.\n");
+        exit 1;
+    }
+    return $conf_file;
+}
+
+# Read the setup configuration file if it exists
+
+sub read_su_conf {
+    my ($conf_file) = @_;
+    if (!$conf_file) {
+        $conf_file = $opt_setup;
+    }
+
+    if ($opt_debug) {
+        dbg("reading setup file $conf_file");
+    }
+    my $conf = AppConfig->new({});
+    $conf->define('copy', { ARGCOUNT => ARGCOUNT_LIST });
+    $conf->define('dir',  { ARGCOUNT => ARGCOUNT_LIST });
+    $conf->define(
+        'krb_keytab',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/krb5.keytab'
+        }
+    );
+    $conf->define(
+        'krb_principal',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'host/' . hostfqdn()
+        }
+    );
+    $conf->define(
+        'krb_realm',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'ca-zephyr.org'
+        }
+    );
+    $conf->define(
+        'tgt_file',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/tmp/su-xen-backup-' . $$ . '.tgt'
+        }
+    );
+    $conf->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
+
+    if (-e $conf_file) {
+        $conf->file($conf_file);
+    }
+    return $conf;
+}
+
+sub example_su_conf {
+    my ($conf_file) = @_;
+    if (!$conf_file) {
+        $conf_file = $opt_setup;
+    }
+
+    msg("# ----------------------------------------------------\n");
+    msg("# Example su xen configuration file $conf_file\n");
+    msg("#\n");
+    msg("# ----------------------------------------------------\n");
+    msg("# Kerberos credentials used for requesting services of other\n");
+    msg("# other xen servers.\n");
+    msg("krb_keytab = /etc/krb5.keytab\n");
+    msg("krb_principal = host/thishost.domain.top\n");
+    msg("krb_realm = ca-zephyr.org\n");
+    msg("tgt_file = /tmp/su-xen-backup-pid.tgt\n");
+    msg("#\n");
+    msg("# Servers in the xen pool.  This used by the find command.\n");
+    msg("xen_server = server1.domain.top\n");
+    msg("xen_server = server2.domain.top\n");
+    msg("xen_server = server3.domain.top\n");
+    msg("#\n");
+    msg("# ----------------------------------------------------\n");
+    msg("# OBSOLETE Configuration elements\n");
+    msg("# ----------------------------------------------------\n");
+    msg("#\n");
+    msg("Directories to create when creating a VM.  Specify\n");
+    msg("multiple by specifying dir multiple times.\n");
+    msg("dir = /etc/puppet\n");
+    msg("#\n");
+    msg("# Files to copy when creating a VM.\n");
+    msg(    'copy = /etc/xen/su-setup.d/sources/sources.list   '
+          . "/etc/apt/sources.list\n");
+    msg(    'copy = /etc/xen/su-setup.d/sources/backports.list '
+          . "/etc/apt/sources.list.d/backports.list\n");
+
+    return;
+}
+
+# Take an array contain elements like '/in/path to /out/path' and
+# return a hash of the form $hash{'/in/path'} = '/out/path'.
+
+sub get_install_paths {
+    my ($paths_ref) = @_;
+
+    my %paths = ();
+    for my $ps (@{$paths_ref}) {
+        $ps =~ s/\s+to\s+/ /xms;
+        $ps =~ s/^\s+//xms;
+        $ps =~ s/\s+$//xms;
+        $ps =~ s/\s\s+/ /xmsg;
+        my ($in, $out) = split /\s/, $ps;
+        if (!$out) {
+            print "Skipping copy line: $ps\n";
+        } else {
+            $paths{$in} = $out;
+        }
+    }
+    return %paths;
+}
+
+# Copy a base set of configuration files to the vm
+
+sub copy_base_files {
+    my ($vhost) = @_;
+
+    if ($opt_debug) {
+        dbg('executing copy_base_files');
+    }
+
+    my $conf = read_su_conf();
+
+    my $dir_ref   = $conf->dir();
+    my $paths_ref = $conf->copy();
+    my $vm_mount_point;
+
+    # Create directories as needed
+    if ($conf && scalar @{$dir_ref}) {
+        for my $dir (@{$dir_ref}) {
+            if (!$vm_mount_point) {
+                $vm_mount_point = mount_vm_disk($vhost);
+            }
+            my $new_dir = $vm_mount_point . $dir;
+            if (!-d $new_dir) {
+                if (-e $new_dir) {
+                    carp("WARN: $new_dir exists but is not a directory\n");
+                } else {
+                    msg("Creating directory $new_dir\n");
+                    mkdir $new_dir
+                      or carp("WARN: problem creating $new_dir\n");
+                }
+            }
+        }
+    }
+
+    # Copy files in place
+    if ($conf && scalar(@{$paths_ref})) {
+        my %files_to_move = get_install_paths($paths_ref);
+        for my $in (sort keys %files_to_move) {
+            if (!$vm_mount_point) {
+                $vm_mount_point = mount_vm_disk($vhost);
+            }
+            my $out = $vm_mount_point . $files_to_move{$in};
+            msg("Copying $in to $out\n");
+            copy($in, $out)
+              or carp("WARN: problem copying $in to $out\n");
+        }
+        if ($vm_mount_point) {
+            umount_vm_disk($vhost);
+        }
+    }
+
+    return;
+}
+
+##############################################################################
+# Script Actions
+##############################################################################
+
+# ----------------------------------------------------------------------
+# Create a virtual machine
+
+sub create_vm {
+    my ($vhost) = @_;
+
+    # Require both hostname
+    if (!$vhost) {
+        warn "Insufficient arguments\n";
+        pod2usage(-verbose => 0);
+    }
+
+    # Get an ip address
+    my $vip = $opt_ip;
+    if (!$opt_ip) {
+        $vip = lookup_ip($vhost);
+        if (!$vip) {
+            msg("ERROR:IP Address lookup failed, specify address with --ip\n");
+            pod2usage(-verbose => 0);
+        }
+    }
+
+    # Make sure it looks like an ip address
+    validate_ip($vip);
+
+    # validate size specifications
+    if ($opt_disk !~ /^\d+(?: Gb | Mb )/xmsi) {
+        warn "Invalid value for disk size.  Units are Mb or Gb.\n";
+        pod2usage(-verbose => 0);
+    }
+    $opt_disk =~ tr/gmB/GMb/;
+    if ($opt_memory !~ /^\d+(?: Gb | Mb )/xmsi) {
+        warn "Invalid value for memory size.  Units are Mb or Gb.\n";
+        pod2usage(-verbose => 0);
+    }
+    $opt_memory =~ tr/gmB/GMb/;
+    if ($opt_swapsize !~ /^\d+(?: Gb | Mb )/xmsi) {
+        warn "Invalid value for swap size.  Units are Mb or Gb.\n";
+        pod2usage(-verbose => 0);
+    }
+    $opt_swapsize =~ tr/gmB/GMb/;
+
+    # validate install method
+    if ($opt_method && $opt_method !~ /^(?: rinse | debootstrap)$/xms) {
+        warn "Invalid method\n";
+        pod2usage(-verbose => 0);
+    }
+
+    # validate arch
+    if ($opt_arch && $opt_arch !~ /^(?:i386|amd64)$/xms) {
+        warn "Invalid arch\n";
+        pod2usage(-verbose => 0);
+    }
+
+    # validate the distribution
+    my $dist_dir;
+    if (-e '/usr/lib/xen-tools') {
+        $dist_dir = '/usr/lib/xen-tools';
+    } elsif (-e '/usr/share/xen-tools') {
+        $dist_dir = '/usr/share/xen-tools';
+    } else {
+        warn "No OS distributions available\n";
+        pod2usage(-verbose => 0);
+    }
+    if ($opt_dist && !-e "${dist_dir}/${opt_dist}.d") {
+        warn "Invalid distribution\n";
+        pod2usage(-verbose => 0);
+    }
+
+    # set the default method
+    if (!$opt_method && $opt_dist =~ /^(?: fedora | centos )/xms) {
+        $opt_method = 'rinse';
+    }
+
+    # generate the vm
+    my @cmd = ('/usr/bin/xen-create-image');
+    push @cmd, "--hostname=${vhost}";
+    push @cmd, "--ip=${vip}";
+    push @cmd, "--memory=${opt_memory}";
+    push @cmd, '--genpass=1';
+    push @cmd, "--size=${opt_disk}";
+    if ($opt_pv) {
+        push @cmd, '--pygrub';
+    }
+    if ($opt_noswap) {
+        push @cmd, '--noswap';
+    } else {
+        push @cmd, "--swap=${opt_swapsize}";
+    }
+    if ($opt_role) {
+        push @cmd, "--role=${opt_role}";
+    }
+    push @cmd, "--dist=$opt_dist";
+    push @cmd, "--arch=$opt_arch";
+    if ($opt_method) {
+        push @cmd, "--install-method=${opt_method}";
+    }
+    msg("Be patient this takes time ...\n");
+    my $create_timeout = 60 * 15;
+    my $out = run_cmd($create_timeout, @cmd);
+
+    msg($out);
+
+    # Pull in any setup files
+    copy_base_files($vhost);
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Delete a virtual machine
+
+sub delete_vm {
+    my ($vhost) = @_;
+
+    if (!$opt_confirm) {
+        msg("INFO: The VM be deleted from the disk.\n");
+        msg("INFO: This is NOT reversable.\n");
+        msg("\n");
+        msg("INFO: If you mean to shut the VM down use destroy instead.\n");
+        msg("\n");
+        msg("INFO: To delete the VM complete add the --confirm switch to \n");
+        msg("INFO: the command line.\n");
+
+        croak('ERROR: Refusing to delete VM without --confirm');
+    }
+
+    # Make sure we know what to delete
+    validate_conf($vhost);
+
+    # set timeout for command execution
+    my $cmd_timeout = 60 * 2;
+
+    # destroy it first if it is running
+    my @cmd = ($opt_toolset, 'list');
+    my $out = run_cmd($cmd_timeout, @cmd);
+    my @lines = split /\n/, $out;
+    for my $s (@lines) {
+        if ($s =~ /^$vhost\s/xms) {
+            @cmd = ($opt_toolset, 'destroy', $vhost);
+            $out = run_cmd($cmd_timeout, @cmd);
+            msg($out);
+            last;
+        }
+    }
+
+    # delete the vm
+    my @cmd = ('/usr/bin/xen-delete-image', ${vhost});
+    my $out = run_cmd($cmd_timeout, @cmd);
+    msg($out);
+
+    if ($@) {
+        msg('ERROR: Problem executing:' . join(q{ }, @cmd));
+        croak($@);
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# This is a dispatching routine that calls either the search for a
+# running vm or search for any vm routines.
+
+sub find_vm {
+    my @regex_list = @_;
+
+    my $conf = read_su_conf();
+
+    if (!@{ $conf->xen_server }) {
+        die "ERROR: no xen_server's defined in the configuration file\n";
+    }
+
+    create_ticket_cache($conf);
+    if ($opt_running) {
+        find_running($conf, @regex_list);
+    } else {
+        find_any_vm($conf, @regex_list);
+    }
+    destroy_ticket_cache($conf);
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Find running VMs or display all of them
+
+sub find_running {
+    my $conf       = shift @_;
+    my @regex_list = @_;
+
+    my %host_mem = ();
+    for my $xhost (@{ $conf->xen_server }) {
+        my @cl = ();
+        push @cl, 'xen', 'show';
+        my $stat = remctl($xhost, undef, undef, @cl);
+        if ($stat->error) {
+            die 'ERROR: ' . $stat->error . "\n";
+        }
+        my @host_list = split "\n", $stat->stdout;
+        for my $h (@host_list) {
+            if ($h =~ m/^(\S+)\s+(\d+)\s+(\d+)/xms) {
+                my $vhost = $1;
+                my $id    = $2;
+                my $mem   = $3;
+                if (scalar @regex_list) {
+                    for my $regex (@regex_list) {
+                        if ($vhost =~ m/$regex/xms) {
+                            $host_mem{$vhost}{$xhost} = $mem;
+                        }
+                    }
+                } else {
+                    $host_mem{$vhost}{$xhost} = $mem;
+                }
+            }
+        }
+    }
+
+    if (keys %host_mem) {
+        my $head = "%-32.32s %-16.16s %8s\n";
+        my $fmt  = "%-32.32s %-16.16s %8d\n";
+        msg(sprintf $head, 'Virtual Host', 'Xen Server', 'Memory');
+        msg(sprintf $head, '-' x 32,       '-' x 16,     '-' x 8);
+        for my $h (sort keys %host_mem) {
+            for my $x (sort keys %{ $host_mem{$h} }) {
+                msg(sprintf $fmt, $h, $x, $host_mem{$h}{$x});
+            }
+        }
+    } else {
+        msg("WARN: not matching hosts found\n");
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Find any or all VMs
+
+sub find_any_vm {
+    my $conf       = shift @_;
+    my @regex_list = @_;
+
+    my $conf = read_su_conf();
+
+    my %host_data = ();
+    my $this_name = '';
+    for my $xhost (@{ $conf->xen_server }) {
+        my @cl = ();
+        push @cl, 'xen', 'list';
+        my $stat = remctl($xhost, undef, undef, @cl);
+        if ($stat->error) {
+            die 'ERROR: ' . $stat->error . "\n";
+        }
+        my @lines = split "\n", $stat->stdout;
+        for my $l (@lines) {
+            if ($l =~ /^\s*$/xms) {
+                $this_name = '';
+                next;
+            }
+            if ($l =~ /^Name:\s+(\S+)/xms) {
+                $this_name = $1;
+                next;
+            }
+            if ($this_name && $l =~ m/^(\S+):\s+(\S+)/xms) {
+                my $attr  = $1;
+                my $value = $2;
+                $host_data{$this_name}{$xhost}{$attr} = $value;
+                $this_name = '';
+                next;
+            }
+        }
+    }
+
+    if (keys %host_data) {
+        my $head = "%-32.32s %-16.16s %8.8s %-15s\n";
+        my $fmt  = "%-32.32s %-16.16s %8d %-15s\n";
+        msg(sprintf $head, 'Virtual Host', 'Xen Server', 'Memory', 'IP');
+        msg(sprintf $head, '-' x 32,       '-' x 16,     '-' x 8,  '-' x 15);
+        for my $h (sort keys %host_data) {
+            for my $x (sort keys %{ $host_data{$h} }) {
+                my $foundit = 0;
+                if (scalar @regex_list) {
+                    for my $regex (@regex_list) {
+                        if ($h =~ m/$regex/xms) {
+                            $foundit = 1;
+                            last;
+                        }
+                    }
+                }
+                if (!$foundit) {
+                    next;
+                }
+                msg(
+                    sprintf($fmt,
+                        $h, $x,
+                        $host_data{$h}{$x}{'Memory'},
+                        $host_data{$h}{$x}{'IP'})
+                );
+            }
+        }
+    } else {
+        msg("WARN: not matching hosts found\n");
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List current distributions
+
+sub list_dists {
+
+    # List files in the /usr/lib/xen-tools directory
+    msg("Installable distributions:\n");
+    my $dir;
+    if (-e '/usr/lib/xen-tools') {
+        $dir = '/usr/lib/xen-tools';
+    } elsif (-e '/usr/share/xen-tools') {
+        $dir = '/usr/share/xen-tools';
+    } else {
+        die("ERROR: can't find any distributions");
+    }
+    my %dir_list = ();
+    opendir(my $df, $dir)
+      or croak("ERROR: problem opening directory $dir\n");
+    while (my $file = readdir($df)) {
+        next if $file eq 'common.sh';
+        next if $file =~ /^[.]{1,2}$/xms;
+        $file =~ s/[.]d$//xms;
+        $dir_list{$file} = 1;
+    }
+    closedir $df
+      or croak("ERROR: problem closing directory $dir\n");
+    for my $d (sort keys %dir_list) {
+        msg("$d\n");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List LVM volume group sizes
+
+sub list_freedisk_space {
+
+    my @cmd         = ('/sbin/vgdisplay');
+    my $cmd_timeout = 30;
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    my @out_lines   = split /\n/, $out;
+    for my $z (@out_lines) {
+        if ($z =~ /Name/) {
+            msg("\n$z\n");
+        } elsif ($z =~ /Size/) {
+            msg("$z\n");
+        }
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Display free memory using xl
+
+sub list_freemem {
+
+    my @cmd         = ('/usr/sbin/xl', 'info');
+    my $cmd_timeout = 60 * 2;
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    my @lines       = split /\n/, $out;
+    msg("Memory units are megabytes.\n");
+    msg("\n");
+    for my $l (@lines) {
+        if ($l =~ /memory/) {
+            msg("$l\n");
+        }
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List xen-tools rules excluding the README file
+
+sub list_roles {
+
+    # List files in the /usr/lib/xen-tools/role.d directory
+    msg("Roles in $ROLE_DIR:\n");
+    my $df;
+    my %dir_list = ();
+    opendir($df, $ROLE_DIR);
+    while (my $file = readdir($df)) {
+        next if $file eq 'README';
+        next if $file =~ /^[.]{1,2}$/xms;
+        $file =~ s/[.]d$//xms;
+        $dir_list{$file} = 1;
+    }
+    for my $d (sort keys %dir_list) {
+        msg("$d\n");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Find toolset in use
+
+sub find_toolset {
+    my $def_file = '/etc/default/xen';
+    if (-e $def_file) {
+        my $fh;
+        open($fh, '<', $def_file);
+        while (<$fh>) {
+            chomp;
+            my $inline = $_;
+            $inline =~ s/\s+$//xms;
+            if ($inline =~ /TOOLSTACK\s*=\s*(.+)/xms) {
+                my $ts = $1;
+                if ($ts =~ /(?:xl|xm)/xms) {
+                    $opt_toolset = "/usr/sbin/$ts";
+                }
+                last;
+            }
+        }
+        close $fh;
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# print a role file back to STDOUT
+
+sub show_role {
+    my ($role) = @_;
+
+    my $role_file = "$ROLE_DIR/$role";
+
+    if (-e $role_file) {
+        my $rf;
+        open $rf, '<', $role_file or croak("Cannot open $role_file");
+        while (<$rf>) {
+            my $line = $_;
+            print $_;
+        }
+        close $rf or msg("WARN: Problem closing $role_file");
+    } else {
+        msg("ERROR: $role_file not found");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List the disks associated with a VM
+
+sub list_vm_disks {
+    my ($vhost) = @_;
+
+    # Require both hostname
+    if (!$vhost) {
+        msg("WARN: Insufficient arguments\n");
+        pod2usage(-verbose => 0);
+    }
+
+    # Open the configuration and read until we find the device
+    # name for the xen disk.
+    my $ch;
+    my $vm_conf = validate_conf($vhost);
+    open($ch, '<', $vm_conf);
+    my $vm_device;
+    my $disk_block = 0;
+    my $disk_found = 0;
+    msg("Disk list for $vhost:\n");
+
+    while (<$ch>) {
+        my $in_line = $_;
+        if (!$disk_block) {
+            if ($in_line =~ /^disk\s+=\s+\[/xms) {
+                $disk_block = 1;
+            }
+            next;
+        }
+        if ($in_line =~ /\]/xms) {
+            last;
+        }
+        if ($in_line =~ m{\s*phy:(/dev/[\w\d\-\_]+/)([\w\d\-\.]+),}xms) {
+            $disk_found = 1;
+            my $vm_device      = $1;
+            my $vm_disk        = $2;
+            my $vm_mount_point = "/mnt/$vm_disk";
+            if (-e $vm_mount_point) {
+                msg("  vm_disk  MOUNTED\n");
+            } else {
+                msg("  $vm_disk\n");
+            }
+        }
+    }
+    if (!$disk_found) {
+        msg("No Disks found\n");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List virtual machines
+
+sub list_vms {
+
+    my @cmd         = ('/usr/bin/xen-list-images');
+    my $cmd_timeout = 60 * 2;
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    msg($out);
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Mount the vm's disk
+
+sub mount_vm_disk {
+    my ($vhost) = @_;
+
+    # Require both hostname
+    if (!$vhost) {
+        msg("WARN: Insufficient arguments\n");
+        pod2usage(-verbose => 0);
+    }
+
+    # Open the configuration and read until we find the device
+    # name for the xen disk.
+    my $ch;
+    my $vm_conf = validate_conf($vhost);
+    open($ch, '<', $vm_conf);
+    my $vm_device;
+    my $disk_block = 0;
+    my $disk_name  = $vhost . $opt_diskid;
+    while (<$ch>) {
+        my $in_line = $_;
+        if (!$disk_block) {
+            if ($in_line =~ /^disk\s+=\s+\[/xms) {
+                $disk_block = 1;
+            }
+            next;
+        }
+        if ($in_line =~ /\]/xms) {
+            last;
+        }
+        if ($in_line =~ m{\s*phy:(/dev/[\w\d\_\-]+/$disk_name),}xms) {
+            $vm_device = $1;
+            last;
+        }
+    }
+    if (!$vm_device) {
+        msg("ERROR: disk $vm_device not found in $vm_conf\n");
+        exit 1;
+    }
+    if (!-e $vm_device) {
+        msg("ERROR: disk device $vm_device does not exist\n");
+        exit 1;
+    }
+
+    # Create the mount point
+    my $vm_mount_point = "/mnt/$disk_name";
+    if (!-e $vm_mount_point) {
+        mkdir $vm_mount_point;
+    }
+
+    # Mount the disk
+    my @cmd;
+    push @cmd, 'mount', $vm_device, $vm_mount_point;
+    if ($opt_moptions) {
+        push @cmd, '-o', $opt_moptions;
+    }
+    my $cmd_timeout = 60;
+    my $out = run_cmd($cmd_timeout, @cmd);
+    msg($out);
+
+    return $vm_mount_point;
+}
+
+# ----------------------------------------------------------------------
+# Dismount the vm's disk
+
+sub umount_vm_disk {
+    my ($vhost) = @_;
+
+    # Require both hostname
+    if (!$vhost) {
+        msg("WARN: Insufficient arguments\n");
+        pod2usage(-verbose => 0);
+    }
+
+    # The mount point
+    my $vm_mount_point = "/mnt/${vhost}${opt_diskid}";
+    if (!-e $vm_mount_point) {
+        msg("ERROR: $vm_mount_point not mounted\n");
+        exit 1;
+    }
+
+    # Dismount the disk
+    my @cmd            = ('umount', $vm_mount_point);
+    my $umount_timeout = 60;
+    my $out            = run_cmd($umount_timeout, @cmd);
+    msg($out);
+    rmdir($vm_mount_point)
+      or croak("ERROR: problem deleting mount point $vm_mount_point\n");
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Perform an xm action
+sub xtool_action {
+    my ($action) = @_;
+
+    my @cmd         = ($opt_toolset, $action);
+    my $cmd_timeout = 60 * 2;
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    msg($out);
+    return;
+}
+
+# ----------------------------------------------------------------------
+sub xtool_host_action {
+    my ($vhost, $action) = @_;
+
+    # Require hostname
+    if (!$vhost) {
+        warn "Hostname required\n";
+        pod2usage(-verbose => 0);
+    }
+
+    # All destroys to be forced when the configuration file is missing.
+    if ($opt_force && $action eq 'destroy') {
+        msg("INFO: Force destroy'ing $vhost");
+    } else {
+        validate_conf($vhost);
+    }
+
+    # Perform the requested action
+    my @cmd         = ($opt_toolset, $action, $vhost);
+    my $cmd_timeout = 60 * 2;
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    msg($out);
+    return;
+}
+
+# ----------------------------------------------------------------------
+sub xtool_conf_action {
+    my ($vhost, $action) = @_;
+    # Require hostname
+    if (!$vhost) {
+        warn "Hostname required\n";
+        pod2usage(-verbose => 0);
+    }
+    my $conf_file = validate_conf($vhost);
+
+    my @cmd         = ($opt_toolset, 'create', $conf_file);
+    my $cmd_timeout = 60 * 2;
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    msg($out);
+    return;
+}
+
+##############################################################################
+# Main Routine
+##############################################################################
+
+GetOptions(
+    'arch=s'     => \$opt_arch,
+    'confirm'    => \$opt_confirm,
+    'debug'      => \$opt_debug,
+    'disk=s'     => \$opt_disk,
+    'diskid=s'   => \$opt_diskid,
+    'dist=s'     => \$opt_dist,
+    'force'      => \$opt_force,
+    'help'       => \$opt_help,
+    'ip=s'       => \$opt_ip,
+    'manual'     => \$opt_manual,
+    'memory=s'   => \$opt_memory,
+    'method=s'   => \$opt_method,
+    'moptions=s' => \$opt_moptions,
+    'noswap'     => \$opt_noswap,
+    'password=s' => \$opt_password,
+    'pv'         => \$opt_pv,
+    'role=s'     => \$opt_role,
+    'running'    => \$opt_running,
+    'setup=s'    => \$opt_setup,
+    'swapsize=s' => \$opt_swapsize,
+    'toolset=s'  => \$opt_toolset
+);
+
+# Flush output immediately
+$| = 1;
+
+# help the poor souls out
+pod2usage(-verbose => 0) if $opt_help;
+pod2usage(-verbose => 2) if $opt_manual;
+pod2usage(-verbose => 0) if !$ARGV[0] || $ARGV[0] eq 'help';
+pod2usage(-verbose => 2) if !$ARGV[0] || $ARGV[0] eq 'manual';
+
+my $action = $ARGV[0];
+
+openlog('su-xen', 'pid', 'local3');
+
+# Set the default for a role
+my $role_default = "su-$opt_dist";
+if (!$opt_role && $action eq 'new') {
+    my $role_file = "$ROLE_DIR/$role_default";
+    if (-e $role_file) {
+        $opt_role = "udev,$role_default";
+    } else {
+        msg("INFO: $role_default is not present.\n");
+    }
+}
+
+my $vhost;
+my $role;
+if ($ARGV[1]) {
+    if ($action eq 'showrole') {
+        $role = $ARGV[1];
+    } else {
+        $vhost = $ARGV[1];
+        if ($vhost && $vhost !~ /[.]/xms) {
+            $vhost .= '.ca-zephyr.org';
+        }
+    }
+}
+
+# Figure out which toolset is in use
+find_toolset();
+
+# Do something
+if    ($action eq 'basefiles') { copy_base_files($vhost); }
+elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
+elsif ($action eq 'delete')    { delete_vm($vhost); }
+elsif ($action eq 'destroy')   { xtool_host_action($vhost, $action); }
+elsif ($action eq 'example')   { example_su_conf(); }
+elsif ($action eq 'find')      { find_vm(@ARGV); }
+elsif ($action eq 'freedisk')  { list_freedisk_space(); }
+elsif ($action eq 'freemem')   { list_freemem(); }
+elsif ($action eq 'list')      { list_vms($vhost); }
+elsif ($action eq 'listdisks') { list_vm_disks($vhost); }
+elsif ($action eq 'listdists') { list_dists(); }
+elsif ($action eq 'listroles') { list_roles(); }
+elsif ($action eq 'mount')     { mount_vm_disk($vhost); }
+elsif ($action eq 'new')       { create_vm($vhost); }
+elsif ($action eq 'reboot')    { xtool_host_action($vhost, $action); }
+elsif ($action eq 'show')      { xtool_action('list'); }
+elsif ($action eq 'showrole')  { show_role($role); }
+elsif ($action eq 'shutdown')  { xtool_host_action($vhost, $action); }
+elsif ($action eq 'umount')    { umount_vm_disk($vhost); }
+else {
+    warn "Unknown action ($action)\n";
+    pod2usage(-verbose => 0);
+}
+
+exit;
+
+__END__
+
+=head1 NAME
+
+su-xen
+
+=head1 SYNOPSIS
+
+     su-xen basefiles <vm-name>
+     su-xen boot <vm-name>
+     su-xen delete <vm-name>
+     su-xen destroy <vm-name> [--force]
+     su-xen example
+     su-xen find [<fragment> <fragment> ...]
+     su-xen freedisk
+     su-xen freemem
+     su-xen help
+     su-xen list
+     su-xen listdists
+     su-xen listdisks <vm-name>
+     su-xen listroles
+     su-xen manual
+     su-xen mount <vm-name> [<mount-options>]
+     su-xen new <vm-name>
+     su-xen reboot <vm-name>
+     su-xen show
+     su-xen showrole <rolename>
+     su-xen shutdown <vm-name>
+     su-xen umount <vm-name>
+
+=head1 DESCRIPTION
+
+Manage xen virtual machines.  The name of the machine and the ip-address
+are required.
+
+=head1 ACTIONS
+
+=over 4
+
+=item basefiles <vm-name>
+
+Copy the base files defined in the setup file from the dom0 system to
+the virtual system.  The default setup file is /etc/xen/su-setup.conf
+and can be overridden with the --setup switch.
+
+=item boot <vm-name>
+
+Boot a virtual machine.
+
+=item delete <vm-name>
+
+Delete a virtual machine.  The virtual machine should be shutdown
+before those command is issued.  This DELETES the VM complete and
+the --confirm switch is required.
+
+=item example
+
+Print an example configuration file.  The example is the only
+documentation for the configuration file.
+
+=item find [<fragment> <fragment> ...]
+
+Find the xen host for a virtual machine.  Any matching fragment will
+cause the virtual machine's xen host to be identified.  If no fragment
+is supplied all virtual machines will be listed.
+
+=item freedisk
+
+Display size information about the logical volume used for Xen virtual
+machines.
+
+=item freemem
+
+Display amount of memory allocated to VMs, the total system memory,
+and the free system memory.  The unit of measure for the displays is
+megabytes.
+
+=item destroy <vm-name>
+
+Shutdown a virtual machine without waiting for any process to
+complete.  Essentially crashes the vm.
+
+=item list
+
+List current defined virtual machines.
+
+=item listdists
+
+List current available distributions to use to create virtual machines.
+
+=item listdisks <vm-name>
+
+List disks associated with a virtual machine.
+
+=item mount <vm-name>
+
+Mount the disk associated with a VM as /mnt/<vm-name>.  The VM must be
+shutdown before the disk is mounted.
+
+=item new <vm-name>
+
+Create a new virtual machine.
+
+=item reboot <vm-name>
+
+Reboot a virtual machine.
+
+=item show
+
+Show the currently executing virtual machines.
+
+=item shutdown <vm-name>
+
+Shutdown a virtual machine gracefully.
+
+=item umount <vm-name>
+
+Dismount a VM's disk.
+
+=back
+
+=head1 OPTIONS AND ARGUMENTS
+
+=over 4
+
+=item <vm-name>
+
+The host name of the vm.  Can be fully qualified name.  If not
+a fully qualified name then .ca-zephyr.org will be added to the
+host name specified.
+
+=item --ip=<address list>
+
+The IP address or addresses of the virtual host to be created.
+Multiple IP addresses are specified as a comma separated list.
+Required only if a DNS lookup for the new hostname fails.
+
+=item --arch=i386|amd64
+
+The architecture of the VM.  Defaults to amd64.
+
+=item --memory=<intUnits>
+
+The size of memory to use for the virtual machine.  The value should
+be an integer followed by the units.  For example: 500Mb is 500
+megabytes.  The default is 500 megabytes.
+
+=item --disk=<intUnits>
+
+The size of the disk to create for the virtual machine.  The value
+should be an integer followed by the units.  For example 1Gb is 1
+gigabyte.  The default is 4 gigabytes.
+
+=item --dist=<dist-name>
+
+Create a virtual machine with dist-name operation system.
+
+=item --diskid=<string>
+
+The diskid of the disk to mount.  Defaults to "-disk".
+
+=item --password=<passphrase>
+
+Set the password for the root user of a new virtual machine.  Defaults
+to vmPassWord.
+
+=item --method=<install-method>
+
+Specify the installation method to use. Valid methods are: debootstrap
+or rinse.  Default for centos and fedoracore is rinse, debootstrap for
+everything else.
+
+=item --moptions=<mount-options>
+
+Options passed to the mount command when mounting a VMs disk.
+
+=item --noswap
+
+Generate a VM without a swap partition.
+
+=item --pv
+
+Generate a Paravirtualized guest.  The default is to build a 
+PV guest.
+
+=item --setup=<setup file>
+
+The setup file is depreciated in favor of using xen-tools roles.
+
+The setup file used by the new and basefiles action.  The default
+setup file is /etc/xen/su-setup.conf.  The file is a simple
+configuration file that currently supports a two attributes
+'mkdir' and 'copy'.  An example setup file is:
+
+      dir = /etc/puppet
+      copy = /srv/setfiles/puppet.conf /etc/puppet/puppet.conf
+      copy = /etc/krb5.conf /etc/krb5.conf
+
+During setup the domu's disk is mounted and the input files are
+copied to the path on the domu's path.  Once all the files have
+been copied the domu's disk is unmounted.
+
+=item --role=<comma separated list>
+
+Specifies the xen-tools roles to use when building a host.  The
+default is udev,su-<distname>.
+
+=item --swapsize=<size of swapfile>
+
+The size of the swap file.
+
+=item --toolset=[xl|xm]
+
+The tool set to use.  The default is either the setting in the
+TOOLSTACK setting in the /etc/default/xen file or 'xm'.
+
+=item --force
+
+Force destroy when a Xen guest.  This is required when the guest's
+configuration file has been deleted, but the guest is still running.
+
+=item --debug
+
+Generate debugging messages.
+
+=item --help
+
+A short help message.
+
+=item --manual
+
+The complete documentation.
+
+=back
+
+=head1 EXAMPLES
+
+Create a Debian virtual machine:
+
+    su-xen new somehost --disk=10Gb --memory=500Mb
+
+Create a Ubuntu natty virtual machine:
+
+    su-xen new somehost --disk=10Gb --memory=500Mb --dist=natty
+
+
+=head1 AUTHOR
+
+Bill MacAllister <bill@ca-zephyr.org>
+
+=head1 COPYRIGHT
+
+This software was developed for use at Stanford University 2012-2014.
+All rights reserved.
+
+Modifications to the software have been made by Bill MacAllister,
+2015-2018.  All rights reserved.
+
+=cut

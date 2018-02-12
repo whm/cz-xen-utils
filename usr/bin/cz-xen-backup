@@ -1,0 +1,989 @@
+#!/usr/bin/perl
+#
+# Copyright 2014 Board of Trustees, Leland Stanford Jr. University
+# Copyright 2015-2018 Bill MacAllister <bill@ca-zephyr.org>
+#
+# Script to backup xen virtual hosts
+
+use AppConfig qw(:argcount :expand);
+use Carp;
+use File::Copy;
+use Getopt::Long;
+use IPC::Run qw( run timeout );
+use Net::DNS;
+use Net::Domain qw( hostfqdn );
+use Net::Remctl;
+use Pod::Usage;
+use POSIX;
+use CZ::Xentools;
+use strict;
+
+my $opt_bootold;
+my $opt_bootnew;
+my $opt_confonly;
+my $opt_debug;
+my $opt_example;
+my $opt_help;
+my $opt_manual;
+my $opt_conf = '/etc/cz-xen-backup.conf';
+
+my $CONF;
+my $DEBUG_TIME = time();
+
+my %COMP = (
+    NONE => {
+        action => '',
+        type   => 'tar'
+    },
+    z => {
+        action => 'z',
+        type   => 'tgz'
+    },
+    J => {
+        action => 'J',
+        type   => 'xz'
+    }
+);
+
+##############################################################################
+# Subroutines
+##############################################################################
+
+# output debugging information
+
+sub dbg {
+    (my $tmp) = @_;
+    my $now     = time;
+    my $elapsed = $now - $DEBUG_TIME;
+    print {*STDOUT} "$now ($elapsed) $tmp \n"
+      or croak("Problem writing debugging to STDOUT\n");
+    $DEBUG_TIME = $now;
+    return;
+}
+
+# output information
+
+sub msg {
+    (my $tmp) = @_;
+    print {*STDOUT} $tmp
+      or croak("Problem writing to STDOUT\n");
+    return;
+}
+
+# Validate the domain configuration file
+
+sub validate_conf {
+    my ($vhost) = @_;
+    my $conf_file = "/etc/xen/${vhost}.cfg";
+    if (!-e $conf_file) {
+        msg("ERROR: $vhost not a Xen host.\n");
+        exit 1;
+    }
+    return $conf_file;
+}
+
+# Return FQDNs for a list of hosts
+
+sub host_fqdn {
+    my @vlist = @_;
+
+    my @return_list = ();
+    for my $v (@vlist) {
+        if ($v !~ /[.]/xms) {
+            $v .= $CONF->default_domain;
+        }
+        push @return_list, $v;
+    }
+    return @return_list;
+}
+
+# Read the configuration file
+
+sub read_conf {
+    $CONF = AppConfig->new({});
+    $CONF->define(
+        'backup_directory',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/srv/xen-backup'
+        }
+    );
+    $CONF->define(
+        'compression',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'NONE'
+        }
+    );
+    $CONF->define(
+        'default_domain',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '.ca-zephyr.org'
+        }
+    );
+    $CONF->define(
+        'krb_keytab',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/krb5.keytab'
+        }
+    );
+    $CONF->define(
+        'krb_principal',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'host/' . hostfqdn()
+        }
+    );
+    $CONF->define(
+        'krb_realm',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'CA-ZEPHYR.ORG'
+        }
+    );
+    $CONF->define(
+        'tgt_file',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/tmp/cz-xen-backup-' . $$ . '.tgt'
+        }
+    );
+    $CONF->define(
+        'snapshot_size',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '32G'
+        }
+    );
+
+    if (-e $opt_conf) {
+        if ($opt_debug) {
+            dbg("reading conf file $opt_conf");
+        }
+        $CONF->file($opt_conf);
+    }
+
+    if (!$COMP{ $CONF->compression }) {
+        die 'ERROR: invalid compression (' . $CONF->compression . ')';
+    }
+    return;
+}
+
+# Display example configuration file
+
+sub display_example_conf {
+
+    msg("# $opt_conf\n");
+    msg("# example configuration file for cz-xen-backup\n");
+
+    msg("#\n");
+    msg("# The directory that holds the backup files\n");
+    msg("backup_directory = /srv/xen-backup\n");
+
+    msg("#\n");
+    msg("# Compression to use when creating the disk files.\n");
+    msg("# Valid values are 'NONE', 'J', or 'z'\n");
+    msg("compression = NONE\n");
+
+    msg("#\n");
+    msg("# Default DNS domain to use in forming FQDNs.\n");
+    msg("default_domain = .ca-zephyr.internal\n");
+
+    msg("#\n");
+    msg("# Keytab to use when executing remctl and ssh operations\n");
+    msg("krb_keytab = /etc/krb5.keytab\n");
+
+    msg("#\n");
+    msg("# The principal to obtain kerberos credential for.\n");
+    msg("#krb_principal = host/<localhost fqdn>\n");
+
+    msg("#\n");
+    msg("# The Kerberos realm.\n");
+    msg("krb_realm = CA-ZEPHYR.ORG\n");
+
+    msg("#\n");
+    msg("# The Kerberos ticket cache.\n");
+    msg("tgt_file = /tmp/cz-xen-backup.tgt\n");
+
+    msg("#\n");
+    msg("# Maximum size of snapshot file.\n");
+    msg("snapshot_size = 32G\n");
+
+    return;
+}
+
+# run shell commands
+
+sub run_cmd {
+    my ($timeout_min, @cmd) = @_;
+
+    my $in;
+    my $out;
+    my $err;
+    my $cmd_str = join(q{ }, @cmd);
+    my $cmd_timeout = 60 * $timeout_min;
+    msg("Executing $cmd_str\n");
+    eval { run(\@cmd, \$in, \$out, \$err, timeout($cmd_timeout)); };
+    if ($@) {
+        msg("ERROR: $err\n");
+        msg('ERROR: Problem executing:' . join(q{ }, @cmd) . "\n");
+        croak($@);
+    }
+    if ($opt_debug) {
+        dbg($out);
+    }
+    return $out;
+}
+
+# Find the disks listed in a xen configuration file
+
+sub get_xen_disks {
+    my ($vm_conf) = @_;
+
+    my @disk_list = ();
+
+    # Open the configuration and read until we find the device
+    # name for the xen disk.
+    my $ch;
+    open($ch, '<', $vm_conf)
+      or croak("ERROR: problem opening $vm_conf\n");
+    my $vm_device;
+    my $disk_block = 0;
+    while (<$ch>) {
+        my $in_line = $_;
+        if (!$disk_block) {
+            if ($in_line =~ /^disk\s+=\s+\[/xms) {
+                $disk_block = 1;
+            }
+            next;
+        }
+        if ($in_line =~ /\]/xms) {
+            last;
+        }
+        if ($in_line =~ m{\s*phy:(/dev/[\w\d\-\_]+/[\w\d\-\.]+),}xms) {
+            my $vm_disk = $1;
+            push @disk_list, $vm_disk;
+        }
+    }
+    close $ch
+      or croak("ERROR: problem close $vm_conf\n");
+
+    return @disk_list;
+}
+
+# Create a snapshot
+
+sub create_a_snapshot {
+    my ($vhost, $disk_device) = @_;
+
+    my $snapshot_name = $disk_device . '-snapshot';
+    $snapshot_name =~ s{/\S+/}{}xmsg;
+
+    my @lv_cmd = ();
+    push @lv_cmd, '/sbin/lvcreate';
+    push @lv_cmd, '--size', $CONF->snapshot_size;
+    push @lv_cmd, '--snapshot';
+    push @lv_cmd, '--name', $snapshot_name;
+    push @lv_cmd, $disk_device;
+    msg(run_cmd(20, @lv_cmd));
+
+    return $snapshot_name;
+}
+
+# mount the VM's snapshot read only, then create a tar ball
+
+sub backup_a_snapshot {
+    my ($vhost, $disk_device, $snapshot) = @_;
+
+    # get the disk name from the full device path
+    my $disk_name = $disk_device;
+    $disk_name =~ s{/\S+/}{}xmsg;
+
+    # Create the mount point
+    my $mount_point = "/mnt/$snapshot";
+    if (!-e $mount_point) {
+        mkdir $mount_point;
+    }
+
+    # Mount the snapshop
+    my @mt_cmd = ();
+    push @mt_cmd, '/bin/mount';
+    push @mt_cmd, $disk_device;
+    push @mt_cmd, $mount_point;
+    push @mt_cmd, '-o', 'ro';
+    msg(run_cmd(10, @mt_cmd));
+
+    # Clean out the old backup
+    for my $c (sort keys %COMP) {
+        my $tar_file
+          = $CONF->backup_directory() . "/${disk_name}." . $COMP{$c}{'type'};
+        if (-e $tar_file) {
+            msg("INFO: removing $tar_file\n");
+            unlink $tar_file or croak("ERROR: problem removing $tar_file");
+        }
+    }
+
+    # create the backup
+    msg("Changing directory to $mount_point\n");
+    chdir($mount_point);
+    my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
+    my $tar_file
+      = $CONF->backup_directory()
+      . "/${disk_name}."
+      . $COMP{ $CONF->compression }{'type'};
+    msg(run_cmd(360, 'tar', $tar_action, $tar_file, './'));
+
+    # unmount the VM's disk
+    msg(run_cmd(10, '/bin/umount', $mount_point));
+
+    msg(run_cmd(10, '/sbin/lvremove', '-f', $disk_device));
+
+    return;
+}
+
+##############################################################################
+# Script Actions
+##############################################################################
+
+# ----------------------------------------------------------------------
+# Backup a virtual machine
+
+sub backup_vm {
+    my @params = @_;
+
+    my @vhost_list = host_fqdn(@params);
+    for my $v (@vhost_list) {
+        validate_conf($v);
+    }
+
+    for my $vhost (@vhost_list) {
+        # copy the configuration file
+        my $vm_config = "/etc/xen/${vhost}.cfg";
+        msg(run_cmd(60, 'cp', $vm_config, $CONF->backup_directory()));
+
+        # Create file containnig LVM information about the disks used
+        # by the vm.
+        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        msg("Writing LVM data to $vm_lvm ...\n");
+        my @disk_list = get_xen_disks($vm_config);
+        open(my $lh, '>', $vm_lvm)
+          or croak("ERROR: problem opening $vm_lvm for write\n");
+        for my $d (@disk_list) {
+            my $lvm_data = run_cmd(5, 'lvdisplay', $d);
+            print $lh $lvm_data
+              or die("ERROR: problem writing to $vm_lvm");
+        }
+        close $lh
+          or croak("ERROR: problem closing $vm_lvm");
+
+        next if $opt_confonly;
+
+        # shutdown the vm if it is running
+        my $stat = run_cmd(5, '/usr/bin/cz-xen', 'show');
+        my $vm_restart = 0;
+        if ($stat =~ /$vhost/xms) {
+            msg(run_cmd(10, '/usr/bin/cz-xen', 'shutdown', $vhost));
+            $vm_restart = 1;
+        }
+
+        # Create snapshotsbackup each disk
+        my %snapshot_list = ();
+        for my $d (@disk_list) {
+            if ($d !~ /-swap$/xms) {
+                my $snapshot_name = create_a_snapshot($vhost, $d);
+                $snapshot_list{$d} = $snapshot_name;
+            }
+        }
+
+        # Reboot the machine once the snapshot has been created
+        if ($opt_bootold) {
+            # reboot the system
+            sleep 5;
+            msg(run_cmd(10, 'cz-xen', 'boot', $vhost));
+        }
+
+        # Create backup of each disk
+        for my $d (sort keys %snapshot_list) {
+            backup_a_snapshot($vhost, $d, $snapshot_list{$d});
+        }
+
+        msg("Backup of $vhost complete.\n");
+
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Restore a virtual machine
+
+sub restore_vm {
+    my @params = @_;
+
+    my @vhost_list = host_fqdn(@params);
+
+    # Perform validation first before we do anything
+    for my $vhost (@vhost_list) {
+        # Check to make sure the new vm does not exist on this host.
+        my $vm_config = "/etc/xen/${vhost}.cfg";
+        if (-e $vm_config) {
+            msg("WARN: $vm_config exists on this host.\n");
+            die("ERROR: restore aborted.\n");
+        }
+
+        # Make sure the needed configuration exist
+        my $vm_config_new = $CONF->backup_directory() . "/${vhost}.cfg";
+        if (!-e $vm_config_new) {
+            die("ERROR: $vm_config_new missing.\n");
+        }
+        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        if (!-e $vm_lvm) {
+            die("ERROR: $vm_config_new missing.\n");
+        }
+    }
+
+    for my $vhost (@vhost_list) {
+        # Check to make sure the new vm does not exist on this host.
+        my $vm_config = "/etc/xen/${vhost}.cfg";
+        if (-e $vm_config) {
+            msg("WARN: $vm_config exists on this host.\n");
+            die("ERROR: restore aborted.\n");
+        }
+
+        # Make sure the needed configuration exist
+        my $vm_config_new = $CONF->backup_directory() . "/${vhost}.cfg";
+        if (!-e $vm_config_new) {
+            die("ERROR: $vm_config_new missing.\n");
+        }
+        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        if (!-e $vm_lvm) {
+            die("ERROR: $vm_config_new missing.\n");
+        }
+
+        # Read lvm disks for this vm
+        open(my $lvm, '<', $vm_lvm)
+          or die("ERROR: problem opeing $vm_lvm\n");
+        my %lvm_list = ();
+        my $lvm_cnt  = 0;
+        while (<$lvm>) {
+            chomp;
+            my $inline = $_;
+            if ($inline =~ /---\s+Logical\s+volume\s+---/) {
+                $lvm_cnt++;
+            } elsif ($inline =~ /^\s*(LV|VG)\s+(\w+)\s+(.*)/xmsi) {
+                my $key = lc($1 . $2);
+                my $val = $3;
+                $key =~ s/\s+//xmsg;
+                $lvm_list{$lvm_cnt}{$key} = $val;
+            }
+        }
+        close $lvm
+          or croak("ERROR: problem closing $lvm\n");
+        if ($opt_debug) {
+            for my $i (sort keys %lvm_list) {
+                dbg("lvm number: $i");
+                for my $k (sort keys %{ $lvm_list{$i} }) {
+                    dbg("k:$k value:$lvm_list{$i}{$k}");
+                }
+            }
+        }
+
+        # Read the volume group from the xen-tools configuration file.
+        my $xen_tools_conf = '/etc/xen-tools/xen-tools.conf';
+        my $xen_tools_vg;
+        if (-e $xen_tools_conf) {
+            open(my $xt, '<', $xen_tools_conf)
+              or die("ERROR: problem opeing $xen_tools_conf\n");
+            while (<$xt>) {
+                chomp;
+                my $inline = $_;
+                if ($inline =~ /lvm\s*=\s*(\S+)/xms) {
+                    $xen_tools_vg = $1;
+                    last;
+                }
+            }
+            close $xt
+              or croak("ERROR: problem closing $xen_tools_conf\n");
+            if ($opt_debug) {
+                dbg("xen-tools.conf vg = $xen_tools_vg");
+            }
+        }
+
+        # Copy the VM configuration file into place on the new host.
+        msg(run_cmd(30, 'cp', $vm_config_new, $vm_config));
+
+        # Create lvm disks for this vm
+        for my $i (sort keys %lvm_list) {
+            my $this_name = $lvm_list{$i}{'lvname'};
+            if (!$this_name) {
+                msg("WARN: LVM name not found for lvm $lvm_cnt.  Skipping\n");
+                next;
+            }
+            my $this_path = $lvm_list{$i}{'lvpath'};
+            if (!$this_path) {
+                msg("WARN: LVM path not found for lvm $this_name.\n");
+                msg("INFO: Skipping $this_name.\n");
+                next;
+            }
+            my ($z, $path_dev, $path_vg, $path_disk)
+              = split(/\//, $this_path, 4);
+            my $this_size = $lvm_list{$i}{'lvsize'};
+            if (!$this_size) {
+                msg("WARN: LVM size not found for lvm $this_name.\n");
+                msg("INFO: Skipping $this_name.\n");
+                next;
+            }
+            $this_size =~ s/\s+//xmsg;
+            $this_size =~ s/iB$//xms;
+            my $this_vg;
+            my $lvm_vg = $lvm_list{$i}{'vgname'};
+            if ($xen_tools_vg) {
+                $this_vg   = $xen_tools_vg;
+                $this_path = "/$path_dev/$xen_tools_vg/$path_disk";
+            } else {
+                $this_vg = $lvm_vg;
+            }
+            if (!$this_vg) {
+                die("ERROR: volume group not found for $this_name.");
+                next;
+            }
+            # If the volume group is different on this system modify
+            # the paths in the configuration file.
+            if ($xen_tools_vg ne $lvm_vg) {
+                my @xen_vm_lines = ();
+                open(my $cin, '<', $vm_config)
+                  or die("ERROR: problem opening $vm_config\n");
+                while (<$cin>) {
+                    my $cline = $_;
+                    $cline =~ s/$lvm_vg/$xen_tools_vg/xmsg;
+                    push @xen_vm_lines, $cline;
+                }
+                close $cin
+                  or croak("ERROR: problem closing $vm_config\n");
+                open(my $cout, '>', $vm_config)
+                  or die("ERROR: problem opening $vm_config for write\n");
+                for my $l (@xen_vm_lines) {
+                    print $cout $l
+                      or die("ERROR: problem writing to $vm_config\n");
+                }
+                close $cout
+                  or croak("ERROR: problem closing $vm_config\n");
+            }
+            # Create the lvm, create file systems, and restore data if
+            # necessary.
+            my @lv_cmd = ();
+            push @lv_cmd, 'lvcreate';
+            push @lv_cmd, "--size=$this_size";
+            push @lv_cmd, "--name=$this_name";
+            push @lv_cmd, $this_vg;
+            msg(run_cmd(180, @lv_cmd));
+            if ($this_path =~ /-swap$/xms) {
+                # Create a swap partition
+                msg(run_cmd(30, 'mkswap', $this_path));
+            } else {
+                # Create a disk partition
+                msg(run_cmd(30, 'mkfs', '-t', 'ext4', $this_path));
+                # Mount the VM's disk on the new Xen server.
+                my $mount_point = "/mnt/$this_name";
+                my @mopts;
+                push @mopts, 'noatime';
+                push @mopts, 'nodiratime';
+                push @mopts, 'norelatime';
+                push @mopts, 'data=writeback';
+                push @mopts, 'barrier=0';
+                my $mopts_list = join(',', @mopts);
+                my @cmd;
+                push @cmd, 'cz-xen', 'mount', $vhost, '--moptions',
+                  $mopts_list;
+
+                if ($opt_debug) {
+                    my $m = join(' ', @cmd);
+                    dbg("Executing $m");
+                }
+                msg(run_cmd(30, @cmd));
+                if (!-e $mount_point) {
+                    die("ERROR: mount point $mount_point now found");
+                }
+                # Restore the VM backup to the new VM disk on the newhost.
+                chdir($mount_point);
+                my $tar_file;
+                my $tar_action = 'xf';
+                my $tar_list   = '';
+                for my $c (sort keys %COMP) {
+                    my $tt = $COMP{$c}{'type'};
+                    my $f  = $CONF->backup_directory() . "/${this_name}.$tt";
+                    if (-e $f) {
+                        $tar_action .= $COMP{$c}{'action'};
+                        $tar_file = $f;
+                        last;
+                    }
+                    $tar_list .= "$f ";
+                }
+                if (!$tar_file) {
+                    msg("ERROR: tar file not found in list $tar_list\n");
+                    die("ERROR: fatal error\n");
+                }
+                msg(run_cmd(120, 'tar', $tar_action, $tar_file, './'));
+                # unmount the VM's disk
+                chdir('/tmp');
+                msg(run_cmd(30, 'cz-xen', 'umount', $vhost));
+            }
+        }
+
+        msg("INFO: Restore of $vhost complete.\n");
+
+        if ($opt_bootnew) {
+            # reboot the system
+            msg(run_cmd(30, 'cz-xen', 'boot', $vhost));
+        } else {
+            msg("System $vhost is ready to be booted.\n");
+        }
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Copy a VM backup to a new host
+
+sub copy_vm {
+    my @params = @_;
+
+    my $to = $params[0];
+    if (!$to) {
+        die("ERROR: not destination host specified.\n");
+    }
+
+    my @vhost_list = host_fqdn(@params[1 .. $#params]);
+
+    # Make sure we have all of the files that we expect before we
+    # start.  This check is to prevent the start of a series of
+    # copies if there will be a failure with any of the vhosts.
+    for my $vhost (@vhost_list) {
+        my $backup_cfg = $CONF->backup_directory() . "/${vhost}.cfg";
+        if (!-e $backup_cfg) {
+            die("ERROR: $backup_cfg not found.\n");
+        }
+        my $backup_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        if (!-e $backup_lvm) {
+            die("ERROR: $backup_lvm not found.\n");
+        }
+    }
+
+    # Now perform the copies
+    for my $vhost (@vhost_list) {
+        # Check again just to make sure.
+        my $backup_cfg = $CONF->backup_directory() . "/${vhost}.cfg";
+        if (!-e $backup_cfg) {
+            die("ERROR: $backup_cfg not found.\n");
+        }
+        my $backup_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        if (!-e $backup_lvm) {
+            die("ERROR: $backup_lvm not found.\n");
+        }
+
+        my @file_list = ();
+        opendir(my $df, $CONF->backup_directory())
+          or
+          die('ERROR: problem reading directory ' . $CONF->backup_directory());
+        while (my $file = readdir($df)) {
+            if ($file =~ /$vhost/) {
+                push @file_list, $CONF->backup_directory() . "/$file";
+            }
+        }
+        closedir $df
+          or croak(
+            'ERROR: problem closing directory ' . $CONF->backup_directory());
+        if (scalar(@file_list) == 0) {
+            die('ERROR: no VM backups found to move in directory '
+                  . $CONF->backup_directory());
+        }
+
+        # Add configuration files to the list of files to move
+        create_ticket_cache($CONF);
+        for my $f (@file_list) {
+            my @this_cmd = ();
+            push @this_cmd, 'scp';
+            push @this_cmd, $f;
+            push @this_cmd, "$to:" . $CONF->backup_directory;
+            msg(run_cmd(600, @this_cmd));
+        }
+        msg("Copy of $vhost complete\n");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List current backups
+
+sub list_backups {
+
+    opendir(my $df, $CONF->backup_directory())
+      or die('ERROR: problem reading directory ' . $CONF->backup_directory());
+    my %file_list = ();
+    while (my $file = readdir($df)) {
+        if ($file =~ /\S\S+[.]\S\S+/xms) {
+            $file_list{$file} = $CONF->backup_directory() . "/$file";
+        }
+    }
+    closedir $df
+      or
+      croak('ERROR: problem closing directory ' . $CONF->backup_directory());
+    for my $file (sort keys %file_list) {
+        my $a_path = $file_list{$file};
+        my $a_size = -s $a_path;
+        my $a_unit = 'B';
+        if (length($a_size) > 6) {
+            $a_size = $a_size / 2**20;
+            $a_unit = 'MB';
+        }
+        my $a_ts = strftime('%Y-%m-%d', localtime((stat $a_path)[9]));
+        printf("%9d%-2s %s %s\n", $a_size, $a_unit, $a_ts, $file);
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Copy a VM backup to a new host
+
+sub migrate_vm {
+    my @params = @_;
+
+    my $to = $params[0];
+    if (!$to) {
+        die("ERROR: no hosts specified.\n");
+    }
+    my @to_fqdn = host_fqdn($to);
+    my $to_test = '/etc/xen/' . $to_fqdn[0] . '.cfg';
+    if (-e $to_test) {
+        die("ERROR: missing destination host.\n");
+    }
+
+    my @vhost_list = host_fqdn(@params[1 .. $#params]);
+    for my $v (@vhost_list) {
+        validate_conf($v);
+    }
+
+    create_ticket_cache($CONF);
+    for my $vhost (@vhost_list) {
+        msg("Migrating $vhost\n");
+        backup_vm($vhost);
+        copy_vm($to, $vhost);
+        msg("Restoring $vhost ...\n");
+        my @cl = ();
+        push @cl, 'xen-backup', 'restore', $vhost;
+        if ($opt_bootnew) {
+            push @cl, '--bootnew';
+        }
+        if ($opt_debug) {
+            push @cl, '--debug';
+        }
+        if ($opt_debug) {
+            dbg("remctl $to " . join(' ', @cl));
+        }
+        my $stat = remctl($to, undef, undef, @cl);
+        if ($stat->error) {
+            die "ERROR: restore problem " . $stat->error . "\n";
+        } else {
+            msg($stat->stdout . "\n");
+        }
+    }
+    return;
+}
+
+##############################################################################
+# Main Routine
+##############################################################################
+
+GetOptions(
+    'bootold'  => \$opt_bootold,
+    'bootnew'  => \$opt_bootnew,
+    'conf=s'   => \$opt_conf,
+    'confonly' => \$opt_confonly,
+    'debug'    => \$opt_debug,
+    'example'  => \$opt_example,
+    'help'     => \$opt_help,
+    'manual'   => \$opt_manual
+);
+
+# -- Flush output immediately
+$| = 1;
+
+# -- help the poor souls out
+pod2usage(-verbose => 0) if $opt_help;
+pod2usage(-verbose => 2) if $opt_manual;
+pod2usage(-verbose => 0) if !$ARGV[0] || $ARGV[0] eq 'help';
+pod2usage(-verbose => 2) if !$ARGV[0] || $ARGV[0] eq 'manual';
+
+my $action = $ARGV[0];
+my @params = @ARGV[1 .. $#ARGV];
+
+if ($opt_example || $action eq 'example') {
+    display_example_conf();
+    exit 1;
+}
+
+# Require a hostname always except for list
+if ($action ne 'list' && scalar(@params) == 0) {
+    warn "Insufficient arguments\n";
+    pod2usage(-verbose => 0);
+}
+
+read_conf();
+
+# Do something
+if    ($action eq 'backup')  { backup_vm(@params); }
+elsif ($action eq 'restore') { restore_vm(@params); }
+elsif ($action eq 'copy')    { copy_vm(@params); }
+elsif ($action eq 'list')    { list_backups(); }
+elsif ($action eq 'migrate') { migrate_vm(@params); }
+else {
+    warn "Unknown action ($action)\n";
+    pod2usage(-verbose => 0);
+}
+
+destroy_ticket_cache($CONF);
+
+exit;
+
+__END__
+
+=head1 NAME
+
+cz-xen-backup
+
+=head1 SYNOPSIS
+
+     cz-xen-backup backup <vm-name> [<vm-name> ...]
+     cz-xen-backup copy <to-dom0-host> [<vm-name> ...]
+     cz-xen-backup restore <vm-name> [<vm-name> ...]
+     cz-xen-backup migrate <to-dom0-host> [<vm-name> ...]
+     cz-xen-backup list
+     cz-xen help
+     cz-xen manual
+     cz-xen example
+
+=head1 DESCRIPTION
+
+Backup and restore xen virtual machines.  The restore can be to a new
+name, which is a way to clone a system.
+
+=head1 ACTIONS
+
+=over 4
+
+=item backup <vm-name> [<vm-name> ...]
+
+Backup a list of virtual machines.  The xen configuration file and the
+xen system disk are written to the /srv/xen-backup directory for each
+virtual machine.  Additionally a description of the LVM volumes used
+by the virtual machine is written to the backup directory.  The LVM
+description is used in restoring the virtual machine.
+
+=item copy <to-dom0-host> <vm-name> [<vm-name> ...]
+
+Copy a list of virtual machine backups to a new host.  The xen
+configuration file, xen lvm description file, and the xen backup
+file must exist for each virutal machine.
+
+=item list
+
+List the current backups on the system.
+
+=item migrate <to-dom0-host> <vm-name> [<vm-name> ...]
+
+Perform a backup, copy, and restore for a list of virtual machines.
+
+=item restore <vm-name> [<vm-name> ...]
+
+Restore a list of virtual machines.  The xen configuration file, lvm
+description file, and the xen backup file must exist in the
+/srv/xen-backup directory for each virtual machine.
+
+=item help
+
+Display usage.
+
+=item manual
+
+Display this documentation.
+
+=item manual
+
+Display an example configuration file.
+
+=back
+
+=head1 OPTIONS AND ARGUMENTS
+
+=over 4
+
+=item <vm-name>
+
+The host name of the vm.  Can be fully qualified name.  If not a fully
+qualified name then .ca-zephyr.org will be added to the host name
+specified.
+
+=item <to-dom0-name>
+
+The host name of the Xen dom0 system to copy a backup to.
+
+=item --conf=<file path>
+
+The configuration file to use.  If none is specified then then the
+path /etc/cz-xen-backup.conf is used.  The configuration file
+is optional.
+
+=item --bootold
+
+Boot the VM after a backup.  The default is to leave the
+VM shutdown.
+
+=item --bootnew
+
+Boot the VM after a restore or a migrate.  The default is to leave the
+VM shutdown.
+
+=item --confonly
+
+Backup only the xen configuration file and the LVM disk descriptions.
+
+=item --debug
+
+Generate debugging messages.
+
+=item --help
+
+A short help message.
+
+=item --manual
+
+The complete documentation.
+
+=back
+
+=head1 EXAMPLES
+
+Backup a Xen virtual machine:
+
+    cz-xen-backup somehost backup otherhost.ca-zephyr.org
+
+Restore a Xen virtual machine to a new name
+
+    cz-xen-backup somehost restore otherhost.ca-zephyr.org
+
+=head1 AUTHOR
+
+Bill MacAllister <bill@ca-zephyr.org>
+
+=head1 COPYRIGHT
+
+This software was originally developed for use at Stanford University
+2012-2014.  All rights reserved.
+
+Modifications to the software have been made by Bill MacAllister,
+2015-2018.  All rights reserved.
+
+=cut

@@ -1,0 +1,168 @@
+#!/usr/bin/perl
+#
+# Copyright 2012 Board of Trustees, Leland Stanford Jr. University
+# Copyright 2016, 2017 Bill MacAllister <bill@ca-zephyr.org>
+#
+# Small script to get a better xen console using minicom
+
+use Getopt::Long;
+use Pod::Usage;
+use strict;
+
+my $opt_domain = 'ca-zephyr.org';
+my $opt_help;
+my $opt_manual;
+my $opt_toolset = '/usr/sbin/xm';
+
+##############################################################################
+# Subroutines
+##############################################################################
+
+# ----------------------------------------------------------------------
+# Find toolset in use
+
+sub find_toolset {
+    my $def_file = '/etc/default/xen';
+    if (-e $def_file) {
+        my $fh;
+        open($fh, '<', $def_file);
+        while (<$fh>) {
+            chomp;
+            my $inline = $_;
+            $inline =~ s/\s+$//xms;
+            if ($inline =~ /TOOLSTACK\s*=\s*(.+)/xms) {
+                my $ts = $1;
+                if ($ts =~ /(?:xl|xm)/xms) {
+                    $opt_toolset = "/usr/sbin/$ts";
+                }
+                last;
+            }
+        }
+        close $fh;
+    }
+    return;
+}
+
+##############################################################################
+# Main routine
+##############################################################################
+
+GetOptions(
+    'domain=s'  => \$opt_domain,
+    'help'      => \$opt_help,
+    'manual'    => \$opt_manual,
+    'toolset=s' => \$opt_toolset
+);
+
+# -- Flush output immediately
+$| = 1;
+
+# -- help the poor souls out
+pod2usage(-verbose => 0) if $opt_help;
+pod2usage(-verbose => 2) if $opt_manual;
+pod2usage(-verbose => 0) if !$ARGV[0] || $ARGV[0] eq 'help';
+pod2usage(-verbose => 2) if $ARGV[0] eq 'manual';
+
+my $vm = $ARGV[0];
+if ($vm !~ /[.]/xms) {
+    $vm .= ".$opt_domain";
+}
+
+# Figure out which toolset is in use
+find_toolset();
+
+print "opt_toolset: $opt_toolset\n";
+
+# Confirm that the VM specified is correct and remember
+# the id just in case.
+my $id;
+my @lines = `$opt_toolset list`;
+my $vm_pattern = $vm;
+$vm_pattern =~ s/[.]/[.]/xmsg;
+for my $z (@lines) {
+    if ($z =~ /^$vm_pattern\s+(\d+)/xms) {
+        $id = $1;
+    }
+}
+if (!$id) {
+    die ("Virtual machine ($vm) not found");
+}
+
+# Pick the console interface by toolset
+if ($opt_toolset =~ /xm$/xms) {
+    # get console device
+    my $dev;
+    @lines = `/usr/sbin/xenstore-ls /local/domain/$id/console`;
+    for my $y (@lines) {
+        if ($y =~ /^tty\s+=\s+(.*)/xms) {
+            $dev = $1;
+        }
+    }
+    if (!$dev) {
+        die ("control device no found for $vm");
+    }
+    print "Using $dev --- Press return to access control.\n";
+    print "CNTRL-a q RETURN to escape console session.\n";
+    exec ("minicom --noinit -w --ptty=$dev");
+} elsif ($opt_toolset =~ /\/xl$/xms) {
+    print "Executing: xl console $vm\n";
+    print "Entering console, use ^] to exit console.\n";
+    exec ("xl console $vm");
+    print "\n";
+}
+
+exit;
+
+__END__
+
+=head1 NAME
+
+cz-console
+
+=head1 SYNOPSIS
+
+     cz-console <hostname>|help|manual --toolset=<path> --domain=<domain-name>
+
+=head1 DESCRIPTION
+
+Connect to the console of a Xen virtual machine.  The toolset is used
+to determine how to connect to the console.  If the old xm toolset is
+installed then minicom is used to connect.  If the xl toolset is
+installed then 'xl console' is used.
+
+=head1 OPTIONS
+
+=over 4
+
+=item --toolset=path
+
+The full path to the tool set.  The script auto-detects the xm and
+xl toolsets.
+
+=item --domain=<domain-name>
+
+The script will add on the domain name to form a fully qualified
+domain name if the hostname is supplied on the command line.  The
+default is .ca-zephyr.org.
+
+=back
+
+=head1 EXAMPLES
+
+Connect to host zoot-vm1
+
+    cz-console zoot-vm1
+
+=head1 AUTHOR
+
+Bill MacAllister <bill@ca-zephyr.org>
+
+=head1 COPYRIGHT
+
+This software was developed for use at Stanford University 2012.  All
+rights reserved.
+
+Modifications to the software have been made by Bill MacAllister,
+2015-2018.  All rights reserved.
+
+=cut

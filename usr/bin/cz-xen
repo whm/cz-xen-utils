@@ -14,7 +14,7 @@ use Net::DNS;
 use Net::Domain qw( hostfqdn );
 use Net::Remctl;
 use Pod::Usage;
-use Stanford::Xentools;
+use CZ::Xentools;
 use strict;
 use Sys::Syslog;
 

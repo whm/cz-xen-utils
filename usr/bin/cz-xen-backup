@@ -29,6 +29,7 @@ my $opt_conf = '/etc/cz-xen-backup.conf';
 
 my $CONF;
 my $DEBUG_TIME = time();
+my @KCMD       = ();
 
 my %COMP = (
     NONE => {
@@ -151,6 +152,13 @@ sub read_conf {
         }
     );
     $CONF->define(
+        'shared_backup',
+        {
+            ARGCOUNT => ARGCOUNT_NONE,
+            DEFAULT  => 1
+        }
+    );
+    $CONF->define(
         'snapshot_size',
         {
             ARGCOUNT => ARGCOUNT_ONE,
@@ -168,6 +176,15 @@ sub read_conf {
     if (!$COMP{ $CONF->compression }) {
         die 'ERROR: invalid compression (' . $CONF->compression . ')';
     }
+
+    # Setup prefix for commands that require Kerberos authentication
+    @KCMD = ('/usr/bin/k5start', '-f', $CONF->keytab);
+    if ($CONF->shared_backup) {
+        push @KCMD, '-t';
+    }
+    push @KCMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
+    push @KCMD, '--';
+
     return;
 }
 
@@ -204,8 +221,9 @@ sub display_example_conf {
     msg("krb_realm = CA-ZEPHYR.ORG\n");
 
     msg("#\n");
-    msg("# The Kerberos ticket cache.\n");
-    msg("tgt_file = /tmp/cz-xen-backup.tgt\n");
+    msg("# Shared storage does not require Kerberos authentication to\n");
+    msg("  create backups and no copying of the backup is required.\n");
+    msg("shared_backup = 1\n");
 
     msg("#\n");
     msg("# Maximum size of snapshot file.\n");
@@ -217,8 +235,13 @@ sub display_example_conf {
 # run shell commands
 
 sub run_cmd {
-    my ($timeout_min, @cmd) = @_;
+    my ($timeout_min, $krb_required, @cmd) = @_;
 
+    if ($krb_required) {
+        my @new_cmd = ();
+        push @new_cmd, @KCMD, @cmd;
+        @cmd = @new_cmd;
+    }
     my $in;
     my $out;
     my $err;
@@ -226,6 +249,7 @@ sub run_cmd {
     my $cmd_timeout = 60 * $timeout_min;
     msg("Executing $cmd_str\n");
     eval { run(\@cmd, \$in, \$out, \$err, timeout($cmd_timeout)); };
+
     if ($@) {
         msg("ERROR: $err\n");
         msg('ERROR: Problem executing:' . join(q{ }, @cmd) . "\n");
@@ -287,7 +311,7 @@ sub create_a_snapshot {
     push @lv_cmd, '--snapshot';
     push @lv_cmd, '--name', $snapshot_name;
     push @lv_cmd, $disk_device;
-    msg(run_cmd(20, @lv_cmd));
+    msg(run_cmd(20, 0, @lv_cmd));
 
     return $snapshot_name;
 }
@@ -313,7 +337,7 @@ sub backup_a_snapshot {
     push @mt_cmd, $disk_device;
     push @mt_cmd, $mount_point;
     push @mt_cmd, '-o', 'ro';
-    msg(run_cmd(10, @mt_cmd));
+    msg(run_cmd(10, 0, @mt_cmd));
 
     # Clean out the old backup
     for my $c (sort keys %COMP) {
@@ -326,19 +350,24 @@ sub backup_a_snapshot {
     }
 
     # create the backup
-    msg("Changing directory to $mount_point\n");
+    msg("Creating the backup\n");
     chdir($mount_point);
     my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
     my $tar_file
       = $CONF->backup_directory()
       . "/${disk_name}."
       . $COMP{ $CONF->compression }{'type'};
-    msg(run_cmd(360, 'tar', $tar_action, $tar_file, './'));
+    my $bout = 4 * 60 * 60;
+    my $krb  = 0;
+    if ($CONF->shared_backup) {
+        $krb = 1;
+    }
+    msg(run_cmd($bout, $krb, 'tar', $tar_action, $tar_file, './'));
 
     # unmount the VM's disk
-    msg(run_cmd(10, '/bin/umount', $mount_point));
-
-    msg(run_cmd(10, '/sbin/lvremove', '-f', $disk_device));
+    msg(run_cmd(10, 0, '/bin/umount', $mount_point));
+    sleep(5);
+    msg(run_cmd(10, 0, '/sbin/lvremove', '-f', $disk_device));
 
     return;
 }
@@ -357,34 +386,39 @@ sub backup_vm {
     for my $v (@vhost_list) {
         validate_conf($v);
     }
-
+    my $krb = 0;
+    if ($CONF->backup_shared) {
+        $krb = 1;
+    }
     for my $vhost (@vhost_list) {
         # copy the configuration file
         my $vm_config = "/etc/xen/${vhost}.cfg";
-        msg(run_cmd(60, 'cp', $vm_config, $CONF->backup_directory()));
+        msg(run_cmd(60, $krb, 'cp', $vm_config, $CONF->backup_directory()));
 
         # Create file containnig LVM information about the disks used
         # by the vm.
-        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
-        msg("Writing LVM data to $vm_lvm ...\n");
+        my $tmp_lvm = "/tmp/${vhost}$$.lvm";
+        msg("Writing LVM data to $tmp_lvm ...\n");
         my @disk_list = get_xen_disks($vm_config);
-        open(my $lh, '>', $vm_lvm)
-          or croak("ERROR: problem opening $vm_lvm for write\n");
+        open(my $lh, '>', $tmp_lvm)
+          or croak("ERROR: problem opening $tmp_lvm for write\n");
         for my $d (@disk_list) {
-            my $lvm_data = run_cmd(5, 'lvdisplay', $d);
+            my $lvm_data = run_cmd(5, 0, 'lvdisplay', $d);
             print $lh $lvm_data
-              or die("ERROR: problem writing to $vm_lvm");
+              or die("ERROR: problem writing to $tmp_lvm");
         }
         close $lh
-          or croak("ERROR: problem closing $vm_lvm");
+          or croak("ERROR: problem closing $tmp_lvm");
+        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        msg(run_cmd(60, $krb, 'cp', $tmp_lvm, $vm_lvm));
 
         next if $opt_confonly;
 
         # shutdown the vm if it is running
-        my $stat = run_cmd(5, '/usr/bin/cz-xen', 'show');
+        my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
         my $vm_restart = 0;
         if ($stat =~ /$vhost/xms) {
-            msg(run_cmd(10, '/usr/bin/cz-xen', 'shutdown', $vhost));
+            msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'shutdown', $vhost));
             $vm_restart = 1;
         }
 
@@ -401,7 +435,7 @@ sub backup_vm {
         if ($opt_bootold) {
             # reboot the system
             sleep 5;
-            msg(run_cmd(10, 'cz-xen', 'boot', $vhost));
+            msg(run_cmd(10, 0, 'cz-xen', 'boot', $vhost));
         }
 
         # Create backup of each disk
@@ -423,6 +457,11 @@ sub restore_vm {
     my @params = @_;
 
     my @vhost_list = host_fqdn(@params);
+
+    my $krb = 0;
+    if ($CONF->shared_backup) {
+        $krb = 1;
+    }
 
     # Perform validation first before we do anything
     for my $vhost (@vhost_list) {
@@ -512,7 +551,7 @@ sub restore_vm {
         }
 
         # Copy the VM configuration file into place on the new host.
-        msg(run_cmd(30, 'cp', $vm_config_new, $vm_config));
+        msg(run_cmd(30, $krb, 'cp', $vm_config_new, $vm_config));
 
         # Create lvm disks for this vm
         for my $i (sort keys %lvm_list) {
@@ -578,13 +617,13 @@ sub restore_vm {
             push @lv_cmd, "--size=$this_size";
             push @lv_cmd, "--name=$this_name";
             push @lv_cmd, $this_vg;
-            msg(run_cmd(180, @lv_cmd));
+            msg(run_cmd(180, 0, @lv_cmd));
             if ($this_path =~ /-swap$/xms) {
                 # Create a swap partition
-                msg(run_cmd(30, 'mkswap', $this_path));
+                msg(run_cmd(30, 0, 'mkswap', $this_path));
             } else {
                 # Create a disk partition
-                msg(run_cmd(30, 'mkfs', '-t', 'ext4', $this_path));
+                msg(run_cmd(30, 0, 'mkfs', '-t', 'ext4', $this_path));
                 # Mount the VM's disk on the new Xen server.
                 my $mount_point = "/mnt/$this_name";
                 my @mopts;
@@ -602,9 +641,9 @@ sub restore_vm {
                     my $m = join(' ', @cmd);
                     dbg("Executing $m");
                 }
-                msg(run_cmd(30, @cmd));
+                msg(run_cmd(30, 0, @cmd));
                 if (!-e $mount_point) {
-                    die("ERROR: mount point $mount_point now found");
+                    die("ERROR: mount point $mount_point not found");
                 }
                 # Restore the VM backup to the new VM disk on the newhost.
                 chdir($mount_point);
@@ -625,10 +664,11 @@ sub restore_vm {
                     msg("ERROR: tar file not found in list $tar_list\n");
                     die("ERROR: fatal error\n");
                 }
-                msg(run_cmd(120, 'tar', $tar_action, $tar_file, './'));
+                my $tout = 2 * 60 * 60;
+                msg(run_cmd($tout, $krb, 'tar', $tar_action, $tar_file, './'));
                 # unmount the VM's disk
                 chdir('/tmp');
-                msg(run_cmd(30, 'cz-xen', 'umount', $vhost));
+                msg(run_cmd(30, 0, 'cz-xen', 'umount', $vhost));
             }
         }
 
@@ -636,7 +676,7 @@ sub restore_vm {
 
         if ($opt_bootnew) {
             # reboot the system
-            msg(run_cmd(30, 'cz-xen', 'boot', $vhost));
+            msg(run_cmd(30, 0, 'cz-xen', 'boot', $vhost));
         } else {
             msg("System $vhost is ready to be booted.\n");
         }
@@ -651,9 +691,13 @@ sub restore_vm {
 sub copy_vm {
     my @params = @_;
 
+    if ($CONF->shared_backup) {
+        die("ERROR: no need to copy backup when using shared backup\n");
+    }
+
     my $to = $params[0];
     if (!$to) {
-        die("ERROR: not destination host specified.\n");
+        die("ERROR: no destination host specified.\n");
     }
 
     my @vhost_list = host_fqdn(@params[1 .. $#params]);
@@ -708,7 +752,7 @@ sub copy_vm {
             push @this_cmd, 'scp';
             push @this_cmd, $f;
             push @this_cmd, "$to:" . $CONF->backup_directory;
-            msg(run_cmd(600, @this_cmd));
+            msg(run_cmd(600, 1, @this_cmd));
         }
         msg("Copy of $vhost complete\n");
     }

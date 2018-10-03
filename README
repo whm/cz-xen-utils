@@ -1,0 +1,21 @@
+This repository contains some simple scripts for use with the Xen
+hypervisor.  The cz-xen and cz-xen-backup scripts are crafted to
+integrate well using remctl.  The scripts are normally deployed
+as a Debian package.
+
+Script cz-xen
+
+  This script manages xen guests.  Guests can be created, destroyed,
+  deleted, and booted.  Additionally the script supports searching
+  across multiple xen servers to find a guest using remctl.
+
+Script cz-xen-backup
+
+  This script backs up xen guests.  The script supports backing up
+  to shared storage that requires Kerberos authentication and/or
+  AFS tokens.  The script will copy a machine from one xen host to
+  another and boot the guest when the migration is complete.
+
+Script cz-console
+
+  A trivial script to access a guest's console.

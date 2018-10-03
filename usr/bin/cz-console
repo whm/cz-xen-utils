@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2012 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2016, 2017 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2018 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Small script to get a better xen console using minicom
 

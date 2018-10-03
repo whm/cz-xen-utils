@@ -1,6 +1,10 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 
 Files: *
+Copyright: 2015-2018 Bill MacAllister
+License: Perl
+
+Files: *
 Copyright: 2012
   The Board of Trustees of the Leland Stanford Junior University
 License: Expat

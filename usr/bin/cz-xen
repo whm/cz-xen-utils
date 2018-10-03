@@ -23,7 +23,7 @@ my $opt_confirm;
 my $opt_debug;
 my $opt_disk   = '40Gb';
 my $opt_diskid = '-disk';
-my $opt_dist   = 'wheezy';
+my $opt_dist   = 'stretch';
 my $opt_force;
 my $opt_help;
 my $opt_ip;
@@ -994,7 +994,7 @@ GetOptions(
     'setup=s'    => \$opt_setup,
     'swapsize=s' => \$opt_swapsize,
     'toolset=s'  => \$opt_toolset
-);
+) or die("ERROR: invalid command line arguments\n");
 
 # Flush output immediately
 $| = 1;
@@ -1031,6 +1031,12 @@ if ($ARGV[1]) {
             $vhost .= '.ca-zephyr.org';
         }
     }
+}
+
+# Die if we have too much on the command line
+if ($action ne 'find' && scalar(@ARGV) < 2) {
+    warn("Too many arguments on the command line\n");
+    exit(1);
 }
 
 # Figure out which toolset is in use

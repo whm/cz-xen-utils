@@ -222,7 +222,7 @@ sub display_example_conf {
 
     msg("#\n");
     msg("# Shared storage does not require Kerberos authentication to\n");
-    msg("  create backups and no copying of the backup is required.\n");
+    msg("# create backups and no copying of the backup is required.\n");
     msg("shared_backup = 1\n");
 
     msg("#\n");

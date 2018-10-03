@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-# tests/su-xen.t
+# tests/cz-xen.t
 
 use Test::More qw( no_plan );
 

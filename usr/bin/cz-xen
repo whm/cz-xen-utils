@@ -36,7 +36,7 @@ my $opt_password = 'vmPassWord';
 my $opt_pv       = 1;
 my $opt_role;
 my $opt_running;
-my $opt_setup    = '/etc/su-xen-setup.conf';
+my $opt_setup    = '/etc/cz-xen-setup.conf';
 my $opt_toolset  = '/usr/sbin/xm';
 my $opt_swapsize = '2Gb';
 
@@ -182,7 +182,7 @@ sub read_su_conf {
         'tgt_file',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => '/tmp/su-xen-backup-' . $$ . '.tgt'
+            DEFAULT  => '/tmp/cz-xen-backup-' . $$ . '.tgt'
         }
     );
     $conf->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
@@ -208,7 +208,7 @@ sub example_su_conf {
     msg("krb_keytab = /etc/krb5.keytab\n");
     msg("krb_principal = host/thishost.domain.top\n");
     msg("krb_realm = ca-zephyr.org\n");
-    msg("tgt_file = /tmp/su-xen-backup-pid.tgt\n");
+    msg("tgt_file = /tmp/cz-xen-backup-pid.tgt\n");
     msg("#\n");
     msg("# Servers in the xen pool.  This used by the find command.\n");
     msg("xen_server = server1.domain.top\n");
@@ -224,9 +224,9 @@ sub example_su_conf {
     msg("dir = /etc/puppet\n");
     msg("#\n");
     msg("# Files to copy when creating a VM.\n");
-    msg(    'copy = /etc/xen/su-setup.d/sources/sources.list   '
+    msg(    'copy = /etc/xen/cz-setup.d/sources/sources.list   '
           . "/etc/apt/sources.list\n");
-    msg(    'copy = /etc/xen/su-setup.d/sources/backports.list '
+    msg(    'copy = /etc/xen/cz-setup.d/sources/backports.list '
           . "/etc/apt/sources.list.d/backports.list\n");
 
     return;
@@ -1007,10 +1007,10 @@ pod2usage(-verbose => 2) if !$ARGV[0] || $ARGV[0] eq 'manual';
 
 my $action = $ARGV[0];
 
-openlog('su-xen', 'pid', 'local3');
+openlog('cz-xen', 'pid', 'local3');
 
 # Set the default for a role
-my $role_default = "su-$opt_dist";
+my $role_default = "cz-$opt_dist";
 if (!$opt_role && $action eq 'new') {
     my $role_file = "$ROLE_DIR/$role_default";
     if (-e $role_file) {
@@ -1033,8 +1033,9 @@ if ($ARGV[1]) {
     }
 }
 
-# Die if we have too much on the command line
-if ($action ne 'find' && scalar(@ARGV) < 2) {
+# Die if we have too much on the command line.  This is gross check
+# just to catch egregeous errors.
+if ($action ne 'find' && scalar(@ARGV) > 2) {
     warn("Too many arguments on the command line\n");
     exit(1);
 }
@@ -1073,31 +1074,31 @@ __END__
 
 =head1 NAME
 
-su-xen
+cz-xen
 
 =head1 SYNOPSIS
 
-     su-xen basefiles <vm-name>
-     su-xen boot <vm-name>
-     su-xen delete <vm-name>
-     su-xen destroy <vm-name> [--force]
-     su-xen example
-     su-xen find [<fragment> <fragment> ...]
-     su-xen freedisk
-     su-xen freemem
-     su-xen help
-     su-xen list
-     su-xen listdists
-     su-xen listdisks <vm-name>
-     su-xen listroles
-     su-xen manual
-     su-xen mount <vm-name> [<mount-options>]
-     su-xen new <vm-name>
-     su-xen reboot <vm-name>
-     su-xen show
-     su-xen showrole <rolename>
-     su-xen shutdown <vm-name>
-     su-xen umount <vm-name>
+     cz-xen basefiles <vm-name>
+     cz-xen boot <vm-name>
+     cz-xen delete <vm-name>
+     cz-xen destroy <vm-name> [--force]
+     cz-xen example
+     cz-xen find [<fragment> <fragment> ...]
+     cz-xen freedisk
+     cz-xen freemem
+     cz-xen help
+     cz-xen list
+     cz-xen listdists
+     cz-xen listdisks <vm-name>
+     cz-xen listroles
+     cz-xen manual
+     cz-xen mount <vm-name> [<mount-options>]
+     cz-xen new <vm-name>
+     cz-xen reboot <vm-name>
+     cz-xen show
+     cz-xen showrole <rolename>
+     cz-xen shutdown <vm-name>
+     cz-xen umount <vm-name>
 
 =head1 DESCRIPTION
 
@@ -1111,7 +1112,7 @@ are required.
 =item basefiles <vm-name>
 
 Copy the base files defined in the setup file from the dom0 system to
-the virtual system.  The default setup file is /etc/xen/su-setup.conf
+the virtual system.  The default setup file is /etc/xen/cz-setup.conf
 and can be overridden with the --setup switch.
 
 =item boot <vm-name>
@@ -1259,7 +1260,7 @@ PV guest.
 The setup file is depreciated in favor of using xen-tools roles.
 
 The setup file used by the new and basefiles action.  The default
-setup file is /etc/xen/su-setup.conf.  The file is a simple
+setup file is /etc/xen/cz-setup.conf.  The file is a simple
 configuration file that currently supports a two attributes
 'mkdir' and 'copy'.  An example setup file is:
 
@@ -1274,7 +1275,7 @@ been copied the domu's disk is unmounted.
 =item --role=<comma separated list>
 
 Specifies the xen-tools roles to use when building a host.  The
-default is udev,su-<distname>.
+default is udev,cz-<distname>.
 
 =item --swapsize=<size of swapfile>
 
@@ -1308,11 +1309,11 @@ The complete documentation.
 
 Create a Debian virtual machine:
 
-    su-xen new somehost --disk=10Gb --memory=500Mb
+    cz-xen new somehost --disk=10Gb --memory=500Mb
 
 Create a Ubuntu natty virtual machine:
 
-    su-xen new somehost --disk=10Gb --memory=500Mb --dist=natty
+    cz-xen new somehost --disk=10Gb --memory=500Mb --dist=stretch
 
 
 =head1 AUTHOR

@@ -18,7 +18,7 @@ use POSIX;
 use CZ::Xentools;
 use strict;
 
-my $opt_bootold;
+my $opt_bootold = 1;
 my $opt_bootnew;
 my $opt_confonly;
 my $opt_debug;
@@ -838,11 +838,11 @@ sub migrate_vm {
 ##############################################################################
 
 GetOptions(
-    'bootold'  => \$opt_bootold,
-    'bootnew'  => \$opt_bootnew,
+    'bootold!' => \$opt_bootold,
+    'bootnew!' => \$opt_bootnew,
     'conf=s'   => \$opt_conf,
     'confonly' => \$opt_confonly,
-    'debug'    => \$opt_debug,
+    'debug!'   => \$opt_debug,
     'example'  => \$opt_example,
     'help'     => \$opt_help,
     'manual'   => \$opt_manual
@@ -978,13 +978,13 @@ is optional.
 
 =item --bootold
 
-Boot the VM after a backup.  The default is to leave the
-VM shutdown.
+Boot the xen guest after a backup.  The default is to boot the xen
+guest.
 
 =item --bootnew
 
-Boot the VM after a restore or a migrate.  The default is to leave the
-VM shutdown.
+Boot the xen guest after a restore or a migrate.  The default is to
+leave the VM shutdown.
 
 =item --confonly
 

@@ -151,13 +151,7 @@ sub read_conf {
             DEFAULT  => '/tmp/cz-xen-backup-' . $$ . '.tgt'
         }
     );
-    $CONF->define(
-        'shared_backup',
-        {
-            ARGCOUNT => ARGCOUNT_NONE,
-            DEFAULT  => 1
-        }
-    );
+    $CONF->define('shared_backup', { ARGCOUNT => ARGCOUNT_NONE });
     $CONF->define(
         'snapshot_size',
         {
@@ -178,8 +172,8 @@ sub read_conf {
     }
 
     # Setup prefix for commands that require Kerberos authentication
-    @KCMD = ('/usr/bin/k5start', '-f', $CONF->keytab);
-    if ($CONF->shared_backup) {
+    @KCMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
+    if ($CONF->shared_backup eq 'afs') {
         push @KCMD, '-t';
     }
     push @KCMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
@@ -221,9 +215,11 @@ sub display_example_conf {
     msg("krb_realm = CA-ZEPHYR.ORG\n");
 
     msg("#\n");
-    msg("# Shared storage does not require Kerberos authentication to\n");
-    msg("# create backups and no copying of the backup is required.\n");
-    msg("shared_backup = 1\n");
+    msg("# This value should be set only if kerberos authention is\n");
+    msg("# to write to the backup directory.  Valid values are 'nfs'\n");
+    msg("# or 'afs'. If 'afs' is specified then AFS tokens will be\n");
+    msg("# acquired.\n");
+    msg("shared_backup = afs\n");
 
     msg("#\n");
     msg("# Maximum size of snapshot file.\n");

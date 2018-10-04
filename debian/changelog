@@ -1,4 +1,4 @@
-cz-xen-utils (30) unstable; urgency=medium
+cz-xen-utils (30) UNRELEASED; urgency=medium
 
   * Correct error in handling LVM snapshots during backups that could
     result in deleting the source disk.

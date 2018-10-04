@@ -210,7 +210,7 @@ sub example_su_conf {
     msg("krb_keytab = /etc/krb5.keytab\n");
     msg("krb_principal = host/thishost.domain.top\n");
     msg("krb_realm = ca-zephyr.org\n");
-    msg("tgt_file = /tmp/cz-xen-backup-pid.tgt\n");
+    msg("tgt_file = /tmp/cz-xen.tgt\n");
     msg("#\n");
     msg("# Servers in the xen pool.  This used by the find command.\n");
     msg("xen_server = server1.domain.top\n");

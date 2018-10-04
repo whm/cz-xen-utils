@@ -568,8 +568,8 @@ sub find_any_vm {
     my $conf = read_su_conf();
 
     my %host_data = ();
-    my $this_name = '';
     for my $xhost (@{ $conf->xen_server }) {
+        my $this_name = '';
         my @cl = ();
         push @cl, 'xen', 'list';
         my $stat = remctl($xhost, undef, undef, @cl);
@@ -586,11 +586,9 @@ sub find_any_vm {
                 $this_name = $1;
                 next;
             }
-            if ($this_name && $l =~ m/^(\S+):\s+(\S+)/xms) {
-                my $attr  = $1;
-                my $value = $2;
+            my ($attr, $value) = split(/:/, $l, 2);
+            if ($this_name && $attr && $value) {
                 $host_data{$this_name}{$xhost}{$attr} = $value;
-                $this_name = '';
                 next;
             }
         }

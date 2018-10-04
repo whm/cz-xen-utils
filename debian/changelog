@@ -1,3 +1,10 @@
+cz-xen-utils (30) unstable; urgency=medium
+
+  * Correct error in handling LVM snapshots during backups that could
+    result in deleting the source disk.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Thu, 04 Oct 2018 08:55:08 +0000
+
 cz-xen-utils (29) unstable; urgency=medium
 
   * Rename the package.

@@ -298,7 +298,8 @@ sub get_xen_disks {
 sub create_a_snapshot {
     my ($vhost, $disk_device) = @_;
 
-    my $snapshot_name = $disk_device . '-snapshot';
+    my $snapshot_device = $disk_device . '-snapshot';
+    my $snapshot_name   = $snapshot_device;
     $snapshot_name =~ s{/\S+/}{}xmsg;
 
     my @lv_cmd = ();
@@ -309,7 +310,7 @@ sub create_a_snapshot {
     push @lv_cmd, $disk_device;
     msg(run_cmd(20, 0, @lv_cmd));
 
-    return $snapshot_name;
+    return $snapshot_device, $snapshot_name;
 }
 
 # mount the VM's snapshot read only, then create a tar ball
@@ -422,8 +423,9 @@ sub backup_vm {
         my %snapshot_list = ();
         for my $d (@disk_list) {
             if ($d !~ /-swap$/xms) {
-                my $snapshot_name = create_a_snapshot($vhost, $d);
-                $snapshot_list{$d} = $snapshot_name;
+                my ($snap_dev, $snap_name) = create_a_snapshot($vhost, $d);
+                $snapshot_list{$d}{'dev'}  = $snap_dev;
+                $snapshot_list{$d}{'name'} = $snap_name;
             }
         }
 
@@ -436,7 +438,9 @@ sub backup_vm {
 
         # Create backup of each disk
         for my $d (sort keys %snapshot_list) {
-            backup_a_snapshot($vhost, $d, $snapshot_list{$d});
+            my $snap_dev  = $snapshot_list{$d}{'dev'};
+            my $snap_name = $snapshot_list{$d}{'dev'};
+            backup_a_snapshot($vhost, $snap_dev, $snap_name);
         }
 
         msg("Backup of $vhost complete.\n");

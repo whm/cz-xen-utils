@@ -2,6 +2,8 @@ cz-xen-utils (30) UNRELEASED; urgency=medium
 
   * Correct error in handling LVM snapshots during backups that could
     result in deleting the source disk.
+  * Allow specification for DHCP on xen guests.
+  * Allow specification of number of CPUs for xen guest.
 
  -- Bill MacAllister <bill@ca-zephyr.org>  Thu, 04 Oct 2018 08:55:08 +0000
 
@@ -46,10 +48,10 @@ stanford-server-xen (25) unstable; urgency=medium
 stanford-server-xen (24) unstable; urgency=low
 
   * Correct a bug in the find command that was incorrectly lists hosts.
-  * Add the --force command to allow destroying guests whose configuration 
-    file has been deleted.  This should not happen, but currently when it 
+  * Add the --force command to allow destroying guests whose configuration
+    file has been deleted.  This should not happen, but currently when it
     does the xen guest is not touchable.
-  * When delete'ing a guest destroy it first before deleting the configuration 
+  * When delete'ing a guest destroy it first before deleting the configuration
     file.
 
  -- Bill MacAllister <whm@stanford.edu>  Wed, 20 May 2015 16:27:53 -0700
@@ -58,7 +60,7 @@ stanford-server-xen (23) unstable; urgency=low
 
   * Restructure the shell command processing to use a command routine that
     logs commands using syslog.
-  * Add in a --confirm switch for VM deletions to avoid confusion with the 
+  * Add in a --confirm switch for VM deletions to avoid confusion with the
     destroy command.
 
  -- Bill MacAllister <whm@stanford.edu>  Fri, 24 Oct 2014 18:44:41 -0700
@@ -83,7 +85,7 @@ stanford-server-xen (21) unstable; urgency=low
 
 stanford-server-xen (20) unstable; urgency=low
 
-  * Add find to su-xen.  This searches for xen systems in a cluster 
+  * Add find to su-xen.  This searches for xen systems in a cluster
     of xen servers using remctl.
   * Add a module to hold support routines.
   * Correct check on swapsize units.
@@ -116,7 +118,7 @@ stanford-server-xen (17) unstable; urgency=low
 
 stanford-server-xen (16) unstable; urgency=low
 
-  * Change su-xen-backup to request a graceful shutdown of the system 
+  * Change su-xen-backup to request a graceful shutdown of the system
     when performing a backup.
 
  -- Bill MacAllister <whm@stanford.edu>  Wed, 12 Feb 2014 02:09:46 -0800

@@ -20,17 +20,19 @@ use Sys::Syslog;
 
 my $opt_arch = 'amd64';
 my $opt_confirm;
+my $opt_cpu = 2;
 my $opt_debug;
 my $opt_disk   = '40Gb';
 my $opt_diskid = '-disk';
 my $opt_dist   = 'stretch';
 my $opt_force;
 my $opt_help;
-my $opt_ip;
+my $opt_ip = 'dhcp';
 my $opt_manual;
 my $opt_memory = '4Gb';
 my $opt_method;
 my $opt_moptions;
+my $opt_noudev;
 my $opt_noswap;
 my $opt_password = 'vmPassWord';
 my $opt_pv       = 1;
@@ -326,7 +328,7 @@ sub create_vm {
 
     # Get an ip address
     my $vip = $opt_ip;
-    if (!$opt_ip) {
+    if ($opt_ip eq 'dns') {
         $vip = lookup_ip($vhost);
         if (!$vip) {
             msg("ERROR:IP Address lookup failed, specify address with --ip\n");
@@ -335,6 +337,9 @@ sub create_vm {
     }
 
     # Make sure it looks like an ip address
+    if ($opt_ip ne 'dhcp') {
+        validate_ip($vip);
+    }
     validate_ip($vip);
 
     # validate size specifications
@@ -389,10 +394,17 @@ sub create_vm {
     # generate the vm
     my @cmd = ('/usr/bin/xen-create-image');
     push @cmd, "--hostname=${vhost}";
-    push @cmd, "--ip=${vip}";
     push @cmd, "--memory=${opt_memory}";
     push @cmd, '--genpass=1';
     push @cmd, "--size=${opt_disk}";
+    if ($opt_ip eq 'dhcp') {
+        push @cmd, "--dhcp";
+    } else {
+        push @cmd, "--ip=${vip}";
+    }
+    if ($opt_cpu) {
+        push @cmd, "--vcpus=$opt_cpu";
+    }
     if ($opt_pv) {
         push @cmd, '--pygrub';
     }
@@ -975,6 +987,7 @@ sub xtool_conf_action {
 GetOptions(
     'arch=s'     => \$opt_arch,
     'confirm'    => \$opt_confirm,
+    'cpu=i'      => \$opt_cpu,
     'debug'      => \$opt_debug,
     'disk=s'     => \$opt_disk,
     'diskid=s'   => \$opt_diskid,
@@ -1014,9 +1027,13 @@ my $role_default = "cz-$opt_dist";
 if (!$opt_role && $action eq 'new') {
     my $role_file = "$ROLE_DIR/$role_default";
     if (-e $role_file) {
-        $opt_role = "udev,$role_default";
+        if ($opt_noudev) {
+            $opt_role = $role_file;
+        } else {
+            $opt_role = "udev,$role_file";
+        }
     } else {
-        msg("INFO: $role_default is not present.\n");
+        msg("INFO: $role_file is not present.\n");
     }
 }
 
@@ -1115,6 +1132,12 @@ Copy the base files defined in the setup file from the dom0 system to
 the virtual system.  The default setup file is /etc/xen/cz-setup.conf
 and can be overridden with the --setup switch.
 
+=item basefiles <vm-name>
+
+Copy the base files defined in the setup file from the dom0 system to
+the virtual system.  The default setup file is /etc/xen/cz-setup.conf
+and can be overridden with the --setup switch.
+
 =item boot <vm-name>
 
 Boot a virtual machine.
@@ -1204,12 +1227,21 @@ host name specified.
 =item --ip=<address list>
 
 The IP address or addresses of the virtual host to be created.
-Multiple IP addresses are specified as a comma separated list.
-Required only if a DNS lookup for the new hostname fails.
+Multiple IP addresses are specified as a comma separated list.  In
+addition to being an IP addres the address can either 'dhcp' or 'dns'.
+If 'dhcp' is specified then the guest will be configured to use DHCP.
+If 'dns' is specified then the guest will be configured to use a
+static address that is retrieved from the DNS.  The IP address is
+required to be an valid IP address only if a DNS lookup for the new
+hostname fails.
 
 =item --arch=i386|amd64
 
 The architecture of the VM.  Defaults to amd64.
+
+=item --cpu=<number of CPUs>
+
+The number of virtual CPUs.  The default is 2.
 
 =item --memory=<intUnits>
 
@@ -1246,31 +1278,24 @@ everything else.
 
 Options passed to the mount command when mounting a VMs disk.
 
+=item --noudev
+
+Do not include the udev role in the list of roles.
+
 =item --noswap
 
 Generate a VM without a swap partition.
 
 =item --pv
 
-Generate a Paravirtualized guest.  The default is to build a 
+Generate a Paravirtualized guest.  The default is to build a
 PV guest.
 
 =item --setup=<setup file>
 
-The setup file is depreciated in favor of using xen-tools roles.
-
-The setup file used by the new and basefiles action.  The default
-setup file is /etc/xen/cz-setup.conf.  The file is a simple
-configuration file that currently supports a two attributes
-'mkdir' and 'copy'.  An example setup file is:
-
-      dir = /etc/puppet
-      copy = /srv/setfiles/puppet.conf /etc/puppet/puppet.conf
-      copy = /etc/krb5.conf /etc/krb5.conf
-
-During setup the domu's disk is mounted and the input files are
-copied to the path on the domu's path.  Once all the files have
-been copied the domu's disk is unmounted.
+The setup file used to define a "xen cluster".  It allows for the
+execution of a selected set of commands to be run on multiple nodes in
+the cluster.
 
 =item --role=<comma separated list>
 

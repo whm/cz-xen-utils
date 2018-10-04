@@ -7,6 +7,7 @@
 
 use AppConfig qw(:argcount :expand);
 use Carp;
+use File::Basename;
 use File::Copy;
 use Getopt::Long;
 use IPC::Run qw( run timeout );
@@ -299,8 +300,7 @@ sub create_a_snapshot {
     my ($vhost, $disk_device) = @_;
 
     my $snapshot_device = $disk_device . '-snapshot';
-    my $snapshot_name   = $snapshot_device;
-    $snapshot_name =~ s{/\S+/}{}xmsg;
+    my $snapshot_name   = fileparse($snapshot_device);
 
     my @lv_cmd = ();
     push @lv_cmd, '/sbin/lvcreate';
@@ -310,20 +310,16 @@ sub create_a_snapshot {
     push @lv_cmd, $disk_device;
     msg(run_cmd(20, 0, @lv_cmd));
 
-    return $snapshot_device, $snapshot_name;
+    return $snapshot_device;
 }
 
 # mount the VM's snapshot read only, then create a tar ball
 
 sub backup_a_snapshot {
-    my ($vhost, $disk_device, $snapshot) = @_;
-
-    # get the disk name from the full device path
-    my $disk_name = $disk_device;
-    $disk_name =~ s{/\S+/}{}xmsg;
+    my ($vhost, $snap_device) = @_;
 
     # Create the mount point
-    my $mount_point = "/mnt/$snapshot";
+    my $mount_point = '/mnt/' . fileparse($snap_device);
     if (!-e $mount_point) {
         mkdir $mount_point;
     }
@@ -331,15 +327,15 @@ sub backup_a_snapshot {
     # Mount the snapshop
     my @mt_cmd = ();
     push @mt_cmd, '/bin/mount';
-    push @mt_cmd, $disk_device;
+    push @mt_cmd, $snap_device;
     push @mt_cmd, $mount_point;
     push @mt_cmd, '-o', 'ro';
     msg(run_cmd(10, 0, @mt_cmd));
 
     # Clean out the old backup
     for my $c (sort keys %COMP) {
-        my $tar_file
-          = $CONF->backup_directory() . "/${disk_name}." . $COMP{$c}{'type'};
+        my $tar_file = $CONF->backup_directory();
+        $tar_file .= '/' . fileparse($snap_device) . $COMP{$c}{'type'};
         if (-e $tar_file) {
             msg("INFO: removing $tar_file\n");
             unlink $tar_file or croak("ERROR: problem removing $tar_file");
@@ -349,13 +345,11 @@ sub backup_a_snapshot {
     # create the backup
     msg("Creating the backup\n");
     chdir($mount_point);
+    my $tar_file = $CONF->backup_directory() . '/' . fileparse($snap_device);
+    $tar_file .= $COMP{ $CONF->compression }{'type'};
     my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
-    my $tar_file
-      = $CONF->backup_directory()
-      . "/${disk_name}."
-      . $COMP{ $CONF->compression }{'type'};
-    my $bout = 4 * 60 * 60;
-    my $krb  = 0;
+    my $bout       = 4 * 60 * 60;
+    my $krb        = 0;
     if ($CONF->shared_backup) {
         $krb = 1;
     }
@@ -364,7 +358,7 @@ sub backup_a_snapshot {
     # unmount the VM's disk
     msg(run_cmd(10, 0, '/bin/umount', $mount_point));
     sleep(5);
-    msg(run_cmd(10, 0, '/sbin/lvremove', '-f', $disk_device));
+    msg(run_cmd(10, 0, '/sbin/lvremove', '-f', $snap_device));
 
     return;
 }
@@ -423,9 +417,7 @@ sub backup_vm {
         my %snapshot_list = ();
         for my $d (@disk_list) {
             if ($d !~ /-swap$/xms) {
-                my ($snap_dev, $snap_name) = create_a_snapshot($vhost, $d);
-                $snapshot_list{$d}{'dev'}  = $snap_dev;
-                $snapshot_list{$d}{'name'} = $snap_name;
+                $snapshot_list{$d} = create_a_snapshot($vhost, $d);
             }
         }
 
@@ -438,9 +430,7 @@ sub backup_vm {
 
         # Create backup of each disk
         for my $d (sort keys %snapshot_list) {
-            my $snap_dev  = $snapshot_list{$d}{'dev'};
-            my $snap_name = $snapshot_list{$d}{'dev'};
-            backup_a_snapshot($vhost, $snap_dev, $snap_name);
+            backup_a_snapshot($vhost, $snapshot_list{$d});
         }
 
         msg("Backup of $vhost complete.\n");

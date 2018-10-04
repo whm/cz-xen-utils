@@ -335,7 +335,9 @@ sub backup_a_snapshot {
     # Clean out the old backup
     for my $c (sort keys %COMP) {
         my $tar_file = $CONF->backup_directory();
-        $tar_file .= '/' . fileparse($snap_device) . $COMP{$c}{'type'};
+        $tar_file .= '/' . fileparse($snap_device);
+        $tar_file =~ s/\-snapshot//xms;
+        $tar_file .= '.' . $COMP{$c}{'type'};
         if (-e $tar_file) {
             msg("INFO: removing $tar_file\n");
             unlink $tar_file or croak("ERROR: problem removing $tar_file");
@@ -346,7 +348,8 @@ sub backup_a_snapshot {
     msg("Creating the backup\n");
     chdir($mount_point);
     my $tar_file = $CONF->backup_directory() . '/' . fileparse($snap_device);
-    $tar_file .= $COMP{ $CONF->compression }{'type'};
+    $tar_file =~ s/\-snapshot//xms;
+    $tar_file .= '.' . $COMP{ $CONF->compression }{'type'};
     my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
     my $bout       = 4 * 60 * 60;
     my $krb        = 0;
@@ -425,7 +428,7 @@ sub backup_vm {
         if ($opt_bootold) {
             # reboot the system
             sleep 5;
-            msg(run_cmd(10, 0, 'cz-xen', 'boot', $vhost));
+            msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'boot', $vhost));
         }
 
         # Create backup of each disk

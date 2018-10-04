@@ -570,7 +570,7 @@ sub find_any_vm {
     my %host_data = ();
     for my $xhost (@{ $conf->xen_server }) {
         my $this_name = '';
-        my @cl = ();
+        my @cl        = ();
         push @cl, 'xen', 'list';
         my $stat = remctl($xhost, undef, undef, @cl);
         if ($stat->error) {

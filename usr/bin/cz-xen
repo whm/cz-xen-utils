@@ -1302,6 +1302,11 @@ the cluster.
 Specifies the xen-tools roles to use when building a host.  The
 default is udev,cz-<distname>.
 
+=item --running
+
+When used with the find command restricts search to running xen
+guests.
+
 =item --swapsize=<size of swapfile>
 
 The size of the swap file.

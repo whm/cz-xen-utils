@@ -24,7 +24,7 @@ my $opt_cpu = 2;
 my $opt_debug;
 my $opt_disk   = '40Gb';
 my $opt_diskid = '-disk';
-my $opt_dist   = 'stretch';
+my $opt_dist;
 my $opt_force;
 my $opt_help;
 my $opt_ip = 'dhcp';
@@ -134,7 +134,7 @@ sub lookup_ip {
     return $ip;
 }
 
-# Validate the domain configuration file
+# Validate the xen configuration file
 
 sub validate_xen_conf {
     my ($vhost) = @_;
@@ -152,13 +152,20 @@ sub read_conf {
     if ($opt_debug) {
         dbg("reading setup file $opt_setup");
     }
-    my $CONF = AppConfig->new({});
+    $CONF = AppConfig->new({});
     $CONF->define('copy', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
-        'domain',
+        'default_dist',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'ca-zephyr.org'
+            DEFAULT  => 'stretch'
+        }
+    );
+    $CONF->define(
+        'default_domain',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'domain.top'
         }
     );
     $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
@@ -180,7 +187,7 @@ sub read_conf {
         'krb_realm',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'CA-ZEPHYR.ORG'
+            DEFAULT  => 'DOMAIN.TOP'
         }
     );
     $CONF->define(
@@ -192,9 +199,16 @@ sub read_conf {
     );
     $CONF->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
 
+    # Read the configuration file if there is one
     if (-e $opt_setup) {
         $CONF->file($opt_setup);
     }
+
+    # Set the default distribution
+    if (!$opt_dist) {
+        $opt_dist = $CONF->default_dist;
+    }
+
     return;
 }
 
@@ -206,13 +220,16 @@ sub example_conf {
     msg("# ----------------------------------------------------\n");
     msg("#\n");
     msg("# Default domain\n");
-    msg("domain = ca-zephyr.org\n");
+    msg("default_domain = domain.top\n");
+    msg("#\n");
+    msg("# Default distribution\n");
+    msg("default_dist = stretch\n");
     msg("#\n");
     msg("# Kerberos credentials used for requesting services of other\n");
     msg("# other xen servers.\n");
     msg("krb_keytab = /etc/krb5.keytab\n");
     msg("krb_principal = host/thishost.domain.top\n");
-    msg("krb_realm = CA-ZEPHYR.ORG\n");
+    msg("krb_realm = DOMAIN.TOP\n");
     msg("tgt_file = /tmp/cz-xen.tgt\n");
     msg("#\n");
     msg("# Servers in the xen pool.  This used by the find command.\n");
@@ -382,7 +399,7 @@ sub create_vm {
         pod2usage(-verbose => 0);
     }
     if ($opt_dist && !-e "${dist_dir}/${opt_dist}.d") {
-        warn "Invalid distribution\n";
+        warn "Invalid distribution $opt_dist\n";
         pod2usage(-verbose => 0);
     }
 
@@ -1039,7 +1056,11 @@ if ($ARGV[1]) {
     } else {
         $vhost = $ARGV[1];
         if ($vhost && $vhost !~ /[.]/xms) {
-            $vhost .= '.ca-zephyr.org';
+            if ($CONF->default_domain =~ /^[.]/) {
+                $vhost .= $CONF->default_domain;
+            } else {
+                $vhost .= '.' . $CONF->default_domain;
+            }
         }
     }
 }
@@ -1215,8 +1236,8 @@ Dismount a VM's disk.
 =item <vm-name>
 
 The host name of the vm.  Can be fully qualified name.  If not
-a fully qualified name then .ca-zephyr.org will be added to the
-host name specified.
+a fully qualified name then the domain from the configuration
+file set used.
 
 =item --ip=<address list>
 

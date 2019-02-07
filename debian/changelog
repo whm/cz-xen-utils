@@ -1,3 +1,11 @@
+cz-xen-utils (31) unstable; urgency=medium
+
+  * Correct handling of ip=dhcp in cz-xen script.
+  * Add a domain configuration property used as the default domain
+    for vm hosts.
+
+ -- Bill MacAllister <whm@dropbox.com>  Thu, 07 Feb 2019 18:16:21 +0000
+
 cz-xen-utils (30) unstable; urgency=medium
 
   * Correct error in handling LVM snapshots during backups that could

@@ -42,6 +42,7 @@ my $opt_setup    = '/etc/cz-xen-setup.conf';
 my $opt_toolset  = '/usr/sbin/xm';
 my $opt_swapsize = '2Gb';
 
+my $CONF;
 my $DEBUG_TIME = time;
 my $ROLE_DIR   = '/etc/xen-tools/role.d';
 
@@ -135,7 +136,7 @@ sub lookup_ip {
 
 # Validate the domain configuration file
 
-sub validate_conf {
+sub validate_xen_conf {
     my ($vhost) = @_;
     my $conf_file = "/etc/xen/${vhost}.cfg";
     if (!-e $conf_file) {
@@ -147,69 +148,71 @@ sub validate_conf {
 
 # Read the setup configuration file if it exists
 
-sub read_su_conf {
-    my ($conf_file) = @_;
-    if (!$conf_file) {
-        $conf_file = $opt_setup;
-    }
-
+sub read_conf {
     if ($opt_debug) {
-        dbg("reading setup file $conf_file");
+        dbg("reading setup file $opt_setup");
     }
-    my $conf = AppConfig->new({});
-    $conf->define('copy', { ARGCOUNT => ARGCOUNT_LIST });
-    $conf->define('dir',  { ARGCOUNT => ARGCOUNT_LIST });
-    $conf->define(
+    my $CONF = AppConfig->new({});
+    $CONF->define('copy', { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define(
+        'domain',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'ca-zephyr.org'
+        }
+    );
+    $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define(
         'krb_keytab',
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => '/etc/krb5.keytab'
         }
     );
-    $conf->define(
+    $CONF->define(
         'krb_principal',
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => 'host/' . hostfqdn()
         }
     );
-    $conf->define(
+    $CONF->define(
         'krb_realm',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'ca-zephyr.org'
+            DEFAULT  => 'CA-ZEPHYR.ORG'
         }
     );
-    $conf->define(
+    $CONF->define(
         'tgt_file',
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => '/tmp/cz-xen-backup-' . $$ . '.tgt'
         }
     );
-    $conf->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
 
-    if (-e $conf_file) {
-        $conf->file($conf_file);
+    if (-e $opt_setup) {
+        $CONF->file($opt_setup);
     }
-    return $conf;
+    return;
 }
 
-sub example_su_conf {
-    my ($conf_file) = @_;
-    if (!$conf_file) {
-        $conf_file = $opt_setup;
-    }
+sub example_conf {
 
     msg("# ----------------------------------------------------\n");
-    msg("# Example su xen configuration file $conf_file\n");
+    msg("# Example su xen configuration file $opt_setup\n");
     msg("#\n");
     msg("# ----------------------------------------------------\n");
+    msg("#\n");
+    msg("# Default domain\n");
+    msg("domain = ca-zephyr.org\n");
+    msg("#\n");
     msg("# Kerberos credentials used for requesting services of other\n");
     msg("# other xen servers.\n");
     msg("krb_keytab = /etc/krb5.keytab\n");
     msg("krb_principal = host/thishost.domain.top\n");
-    msg("krb_realm = ca-zephyr.org\n");
+    msg("krb_realm = CA-ZEPHYR.ORG\n");
     msg("tgt_file = /tmp/cz-xen.tgt\n");
     msg("#\n");
     msg("# Servers in the xen pool.  This used by the find command.\n");
@@ -265,14 +268,12 @@ sub copy_base_files {
         dbg('executing copy_base_files');
     }
 
-    my $conf = read_su_conf();
-
-    my $dir_ref   = $conf->dir();
-    my $paths_ref = $conf->copy();
+    my $dir_ref   = $CONF->dir();
+    my $paths_ref = $CONF->copy();
     my $vm_mount_point;
 
     # Create directories as needed
-    if ($conf && scalar @{$dir_ref}) {
+    if ($CONF && scalar @{$dir_ref}) {
         for my $dir (@{$dir_ref}) {
             if (!$vm_mount_point) {
                 $vm_mount_point = mount_vm_disk($vhost);
@@ -291,7 +292,7 @@ sub copy_base_files {
     }
 
     # Copy files in place
-    if ($conf && scalar(@{$paths_ref})) {
+    if ($CONF && scalar(@{$paths_ref})) {
         my %files_to_move = get_install_paths($paths_ref);
         for my $in (sort keys %files_to_move) {
             if (!$vm_mount_point) {
@@ -340,7 +341,6 @@ sub create_vm {
     if ($opt_ip ne 'dhcp') {
         validate_ip($vip);
     }
-    validate_ip($vip);
 
     # validate size specifications
     if ($opt_disk !~ /^\d+(?: Gb | Mb )/xmsi) {
@@ -452,7 +452,7 @@ sub delete_vm {
     }
 
     # Make sure we know what to delete
-    validate_conf($vhost);
+    validate_xen_conf($vhost);
 
     # set timeout for command execution
     my $cmd_timeout = 60 * 2;
@@ -490,19 +490,17 @@ sub delete_vm {
 sub find_vm {
     my @regex_list = @_;
 
-    my $conf = read_su_conf();
-
-    if (!@{ $conf->xen_server }) {
+    if (!@{ $CONF->xen_server }) {
         die "ERROR: no xen_server's defined in the configuration file\n";
     }
 
-    create_ticket_cache($conf);
+    create_ticket_cache();
     if ($opt_running) {
-        find_running($conf, @regex_list);
+        find_running(@regex_list);
     } else {
-        find_any_vm($conf, @regex_list);
+        find_any_vm(@regex_list);
     }
-    destroy_ticket_cache($conf);
+    destroy_ticket_cache();
 
     return;
 }
@@ -511,11 +509,10 @@ sub find_vm {
 # Find running VMs or display all of them
 
 sub find_running {
-    my $conf       = shift @_;
     my @regex_list = @_;
 
     my %host_mem = ();
-    for my $xhost (@{ $conf->xen_server }) {
+    for my $xhost (@{ $CONF->xen_server }) {
         my @cl = ();
         push @cl, 'xen', 'show';
         my $stat = remctl($xhost, undef, undef, @cl);
@@ -562,13 +559,10 @@ sub find_running {
 # Find any or all VMs
 
 sub find_any_vm {
-    my $conf       = shift @_;
     my @regex_list = @_;
 
-    my $conf = read_su_conf();
-
     my %host_data = ();
-    for my $xhost (@{ $conf->xen_server }) {
+    for my $xhost (@{ $CONF->xen_server }) {
         my $this_name = '';
         my @cl        = ();
         push @cl, 'xen', 'list';
@@ -782,7 +776,7 @@ sub list_vm_disks {
     # Open the configuration and read until we find the device
     # name for the xen disk.
     my $ch;
-    my $vm_conf = validate_conf($vhost);
+    my $vm_conf = validate_xen_conf($vhost);
     open($ch, '<', $vm_conf);
     my $vm_device;
     my $disk_block = 0;
@@ -845,7 +839,7 @@ sub mount_vm_disk {
     # Open the configuration and read until we find the device
     # name for the xen disk.
     my $ch;
-    my $vm_conf = validate_conf($vhost);
+    my $vm_conf = validate_xen_conf($vhost);
     open($ch, '<', $vm_conf);
     my $vm_device;
     my $disk_block = 0;
@@ -950,7 +944,7 @@ sub xtool_host_action {
     if ($opt_force && $action eq 'destroy') {
         msg("INFO: Force destroy'ing $vhost");
     } else {
-        validate_conf($vhost);
+        validate_xen_conf($vhost);
     }
 
     # Perform the requested action
@@ -969,7 +963,7 @@ sub xtool_conf_action {
         warn "Hostname required\n";
         pod2usage(-verbose => 0);
     }
-    my $conf_file = validate_conf($vhost);
+    my $conf_file = validate_xen_conf($vhost);
 
     my @cmd         = ($opt_toolset, 'create', $conf_file);
     my $cmd_timeout = 60 * 2;
@@ -1018,6 +1012,8 @@ pod2usage(-verbose => 2) if !$ARGV[0] || $ARGV[0] eq 'manual';
 
 my $action = $ARGV[0];
 
+# read the configuration file and setup syslog
+read_conf();
 openlog('cz-xen', 'pid', 'local3');
 
 # Set the default for a role
@@ -1063,7 +1059,7 @@ if    ($action eq 'basefiles') { copy_base_files($vhost); }
 elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
 elsif ($action eq 'delete')    { delete_vm($vhost); }
 elsif ($action eq 'destroy')   { xtool_host_action($vhost, $action); }
-elsif ($action eq 'example')   { example_su_conf(); }
+elsif ($action eq 'example')   { example_conf(); }
 elsif ($action eq 'find')      { find_vm(@ARGV); }
 elsif ($action eq 'freedisk')  { list_freedisk_space(); }
 elsif ($action eq 'freemem')   { list_freemem(); }

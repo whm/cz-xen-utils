@@ -153,6 +153,13 @@ sub read_conf {
         dbg("reading setup file $opt_setup");
     }
     $CONF = AppConfig->new({});
+    $CONF->define(
+        'command_path',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/bin:/sbin:/usr/bin:/usr/sbin'
+        }
+    );
     $CONF->define('copy', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'default_dist',
@@ -221,6 +228,9 @@ sub example_conf {
     msg("#\n");
     msg("# Default domain\n");
     msg("default_domain = domain.top\n");
+    msg("#\n");
+    msg("# Set the PATH\n");
+    msg("command_path = /bin:/sbin:/usr/bin:/usr/sbin\n");
     msg("#\n");
     msg("# Default distribution\n");
     msg("default_dist = stretch\n");
@@ -833,11 +843,33 @@ sub list_vm_disks {
 # List virtual machines
 
 sub list_vms {
-
+    my ($vm)        = @_;
     my @cmd         = ('/usr/bin/xen-list-images');
     my $cmd_timeout = 60 * 2;
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    msg($out);
+    my $out = run_cmd($cmd_timeout, @cmd);
+    if ($vm) {
+        my @lines = split '\n', $out;
+        my $msg;
+        my $found = 0;
+        for my $l (@lines) {
+            if ($found) {
+                if ($l =~ /^Name:\s+ \S+/xms) {
+                    $found = 0;
+                } else {
+                    $msg .= "$l\n";
+                    next;
+                }
+            }
+            if ($l =~ /^Name:\s+ \S+/xms) {
+                $found = 1;
+                $msg .= "$l\n";
+                next;
+            }
+        }
+        msg($msg);
+    } else {
+        msg($out);
+    }
     return;
 }
 
@@ -1050,12 +1082,25 @@ if (!$opt_role && $action eq 'new') {
 
 my $vhost;
 my $role;
+
+# Set FQDN on some commands
+my %require_fqdn = {
+    boot     => 1,
+    delete   => 1,
+    destroy  => 1,
+    mount    => 1,
+    new      => 1,
+    reboot   => 1,
+    shutdown => 1,
+    umount   => 1,
+    xms      => 1
+};
 if ($ARGV[1]) {
     if ($action eq 'showrole') {
         $role = $ARGV[1];
     } else {
         $vhost = $ARGV[1];
-        if ($vhost && $vhost !~ /[.]/xms) {
+        if ($vhost && $require_fqdn{$action} && $vhost !~ /[.]/xms) {
             if ($CONF->default_domain =~ /^[.]/) {
                 $vhost .= $CONF->default_domain;
             } else {
@@ -1071,6 +1116,10 @@ if ($action ne 'find' && scalar(@ARGV) > 2) {
     warn("Too many arguments on the command line\n");
     exit(1);
 }
+
+# Set the environment so and scripts that are called have the
+# correct environment
+$ENV{PATH} = $CONF->command_path();
 
 # Figure out which toolset is in use
 find_toolset();

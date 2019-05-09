@@ -1,3 +1,11 @@
+cz-xen-utils (32) unstable; urgency=medium
+
+  * Use command line fragments when searching for hosts with the list
+    command.
+  * Explicitly set the PATH when running xen tool commands.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Thu, 09 May 2019 18:16:15 +0000
+
 cz-xen-utils (31) unstable; urgency=medium
 
   * Correct handling of ip=dhcp in cz-xen script.

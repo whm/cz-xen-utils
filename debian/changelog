@@ -11,6 +11,8 @@ cz-xen-utils (32) unstable; urgency=medium
   * Use command line fragments when searching for hosts with the list
     command.
   * Explicitly set the PATH when running xen tool commands.
+  * Update the handling of shared backup targets.  Make the options
+    in the configuration file clearer.
 
  -- Bill MacAllister <bill@ca-zephyr.org>  Thu, 09 May 2019 18:16:15 +0000
 

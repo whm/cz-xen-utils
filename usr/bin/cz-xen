@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2018 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2019 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Script to manage xen virtual hosts
 
@@ -168,13 +168,6 @@ sub read_conf {
             DEFAULT  => 'stretch'
         }
     );
-    $CONF->define(
-        'default_domain',
-        {
-            ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'domain.top'
-        }
-    );
     $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'krb_keytab',
@@ -225,9 +218,6 @@ sub example_conf {
     msg("# Example su xen configuration file $opt_setup\n");
     msg("#\n");
     msg("# ----------------------------------------------------\n");
-    msg("#\n");
-    msg("# Default domain\n");
-    msg("default_domain = domain.top\n");
     msg("#\n");
     msg("# Set the PATH\n");
     msg("command_path = /bin:/sbin:/usr/bin:/usr/sbin\n");
@@ -521,7 +511,7 @@ sub find_vm {
         die "ERROR: no xen_server's defined in the configuration file\n";
     }
 
-    create_ticket_cache();
+    create_ticket_cache($CONF);
     if ($opt_running) {
         find_running(@regex_list);
     } else {
@@ -1083,30 +1073,11 @@ if (!$opt_role && $action eq 'new') {
 my $vhost;
 my $role;
 
-# Set FQDN on some commands
-my %require_fqdn = {
-    boot     => 1,
-    delete   => 1,
-    destroy  => 1,
-    mount    => 1,
-    new      => 1,
-    reboot   => 1,
-    shutdown => 1,
-    umount   => 1,
-    xms      => 1
-};
 if ($ARGV[1]) {
     if ($action eq 'showrole') {
         $role = $ARGV[1];
     } else {
         $vhost = $ARGV[1];
-        if ($vhost && $require_fqdn{$action} && $vhost !~ /[.]/xms) {
-            if ($CONF->default_domain =~ /^[.]/) {
-                $vhost .= $CONF->default_domain;
-            } else {
-                $vhost .= '.' . $CONF->default_domain;
-            }
-        }
     }
 }
 

@@ -511,6 +511,10 @@ sub find_vm {
         die "ERROR: no xen_server's defined in the configuration file\n";
     }
 
+    if ($opt_debug) {
+        dbg('Using principal: ' . $CONF->krb_principal);
+        dbg('Keytab file ' . $CONF->krb_keytab);
+    }
     create_ticket_cache($CONF);
     if ($opt_running) {
         find_running(@regex_list);
@@ -532,9 +536,13 @@ sub find_running {
     for my $xhost (@{ $CONF->xen_server }) {
         my @cl = ();
         push @cl, 'xen', 'show';
+        if ($opt_debug) {
+            dbg('Executing: remctl ' . $xhost . ' ' . join(' ', @cl));
+        }
         my $stat = remctl($xhost, undef, undef, @cl);
         if ($stat->error) {
-            die 'ERROR: ' . $stat->error . "\n";
+            print('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
+            print('ERROR: ' . $stat->error . "\n");
         }
         my @host_list = split "\n", $stat->stdout;
         for my $h (@host_list) {

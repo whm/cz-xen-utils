@@ -1,6 +1,7 @@
 cz-xen-utils (33) unstable; urgency=medium
 
   * Correct bug in find command.
+  * Adjust the find output so that names are not truncated.
   * Revert support for short form DNS names for some commands.
 
  -- Bill MacAllister <whm@dropbox.com>  Fri, 24 May 2019 16:15:09 +0000

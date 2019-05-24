@@ -168,7 +168,8 @@ sub read_conf {
             DEFAULT  => 'stretch'
         }
     );
-    $CONF->define('default_domain',
+    $CONF->define(
+        'default_domain',
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => 'Not used. Preserved to suppress process warnings.'
@@ -527,7 +528,7 @@ sub find_vm {
     } else {
         find_any_vm(@regex_list);
     }
-    destroy_ticket_cache();
+    destroy_ticket_cache($CONF);
 
     return;
 }
@@ -538,8 +539,13 @@ sub find_vm {
 sub find_running {
     my @regex_list = @_;
 
-    my %host_mem = ();
+    my %host_mem  = ();
+    my $max_xhost = 16;
+    my $max_vhost = 32;
     for my $xhost (@{ $CONF->xen_server }) {
+        if (length($xhost) > $max_xhost) {
+            $max_xhost = length($xhost);
+        }
         my @cl = ();
         push @cl, 'xen', 'show';
         if ($opt_debug) {
@@ -561,6 +567,9 @@ sub find_running {
                     for my $regex (@regex_list) {
                         if ($vhost =~ m/$regex/xms) {
                             $host_mem{$vhost}{$xhost} = $mem;
+                            if (length($vhost) > $max_vhost) {
+                                $max_vhost = length($vhost);
+                            }
                         }
                     }
                 } else {
@@ -571,10 +580,15 @@ sub find_running {
     }
 
     if (keys %host_mem) {
-        my $head = "%-32.32s %-16.16s %8s\n";
-        my $fmt  = "%-32.32s %-16.16s %8d\n";
-        msg(sprintf $head, 'Virtual Host', 'Xen Server', 'Memory');
-        msg(sprintf $head, '-' x 32,       '-' x 16,     '-' x 8);
+        my $head
+          = "%-${max_vhost}.${max_vhost}s "
+          . "%-${max_xhost}.${max_xhost}s "
+          . "%8.8s\n";
+        my $fmt
+          = "%-${max_vhost}.${max_vhost}s "
+          . "%-${max_xhost}.${max_xhost}s " . "%8d\n";
+        msg(sprintf $head, 'Virtual Host',   'Xen Server',     'Memory');
+        msg(sprintf $head, '-' x $max_vhost, '-' x $max_xhost, '-' x 8);
         for my $h (sort keys %host_mem) {
             for my $x (sort keys %{ $host_mem{$h} }) {
                 msg(sprintf $fmt, $h, $x, $host_mem{$h}{$x});
@@ -597,8 +611,8 @@ sub find_any_vm {
     my $max_xhost = 16;
     my $max_vhost = 32;
     for my $xhost (@{ $CONF->xen_server }) {
-        if (len($xhost) > $max_xhost) {
-            $max_xhost = len($xhost);
+        if (length($xhost) > $max_xhost) {
+            $max_xhost = length($xhost);
         }
         my $this_name = '';
         my @cl        = ();
@@ -620,8 +634,8 @@ sub find_any_vm {
             }
             if ($l =~ /^Name:\s+(\S+)/xms) {
                 $this_name = $1;
-                if (len($this_name) > $max_vhost) {
-                    $max_vhost = len($this_name);
+                if (length($this_name) > $max_vhost) {
+                    $max_vhost = length($this_name);
                 }
                 next;
             }
@@ -634,16 +648,15 @@ sub find_any_vm {
     }
 
     if (keys %host_data) {
-        my $head = "%-${max_vhost}.${max_vhost}s "
-            . "${max_xhost}.${max_xhost}s "
-            . '%8.8s '
-            . "%-15s\n";
-        my $fmt  = "%-${max_vhost}.${max_vhost}s "
-            . "-${max_xhost}.${max_xhost}s "
-            . '%8d '
-            . "%-15s\n";
-        msg(sprintf $head, 'Virtual Host', 'Xen Server', 'Memory', 'IP');
-        msg(sprintf $head, '-' x $max_vhost, '-' x $max_xhost, '-' x 8,  '-' x 15);
+        my $head
+          = "%-${max_vhost}.${max_vhost}s "
+          . "%-${max_xhost}.${max_xhost}s "
+          . "%8.8s\n";
+        my $fmt
+          = "%-${max_vhost}.${max_vhost}s "
+          . "%-${max_xhost}.${max_xhost}s " . "%8d\n";
+        msg(sprintf $head, 'Virtual Host', 'Xen Server', 'Memory');
+        msg(sprintf($head, '-' x $max_vhost, '-' x $max_xhost, '-' x 8));
         for my $h (sort keys %host_data) {
             for my $x (sort keys %{ $host_data{$h} }) {
                 my $foundit = 0;
@@ -658,12 +671,7 @@ sub find_any_vm {
                 if (!$foundit) {
                     next;
                 }
-                msg(
-                    sprintf($fmt,
-                        $h, $x,
-                        $host_data{$h}{$x}{'Memory'},
-                        $host_data{$h}{$x}{'IP'})
-                );
+                msg(sprintf($fmt, $h, $x, $host_data{$h}{$x}{'Memory'}));
             }
         }
     } else {

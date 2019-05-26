@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2018 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2019 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Script to backup xen virtual hosts
 
@@ -30,7 +30,7 @@ my $opt_conf = '/etc/cz-xen-backup.conf';
 
 my $CONF;
 my $DEBUG_TIME = time();
-my @KCMD       = ();
+my @RCMD       = ();
 
 my %COMP = (
     NONE => {
@@ -78,8 +78,7 @@ sub validate_conf {
     my ($vhost) = @_;
     my $conf_file = "/etc/xen/${vhost}.cfg";
     if (!-e $conf_file) {
-        msg("ERROR: $vhost not a Xen host.\n");
-        exit 1;
+        die("ERROR: $vhost not a Xen host.\n");
     }
     return $conf_file;
 }
@@ -118,7 +117,7 @@ sub read_conf {
         }
     );
     $CONF->define(
-        'backup_to_afs',
+        'backup_shared',
         {
             ARGCOUNT => ARGCOUNT_NONE,
             DEFAULT  => 'no'
@@ -186,12 +185,30 @@ sub read_conf {
     }
 
     # Setup prefix for commands that require Kerberos authentication
-    @KCMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
-    if ($CONF->backup_to_afs =~ /^y|t|1/xmsi) {
-        push @KCMD, '-t';
+    if ($CONF->backup_shared =~ /^afs$/xmsi) {
+        if (!$CONF->krb_keytab) {
+            die("ERROR: missing krb_keytab\n");
+        }
+        if (!$CONF->krb_principal) {
+            die("ERROR: missing krb_principal\n");
+        }
+        if (!$CONF->krb_realm) {
+            die("ERROR: missing krb_realm\n");
+        }
+        mgs("INFO: backing using AFS\n");
+        @RCMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
+        push @RCMD, '-t';
+        push @RCMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
+        push @RCMD, '--';
+    } elsif ($CONF->backup_shared =~ /^nfs$/xmsi) {
+        msg("INFO: backup using NFS\n");
+    } elsif ($CONF->backup_shared =~ /^no$/xmsi) {
+        msg("INFO: backup using local storage\n");
+    } elsif ($CONF->backup_shared =~ /^nfs$/xmsi) {
+        die(    'ERROR: invalid value for backup_shared ('
+              . $CONF->backup_shared
+              . ")\n");
     }
-    push @KCMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
-    push @KCMD, '--';
 
     return;
 }
@@ -230,10 +247,10 @@ sub display_example_conf {
 
     msg("#\n");
     msg("# This value should be set only if kerberos authention is\n");
-    msg("# to write to the backup directory.  Valid values are 'nfs'\n");
-    msg("# or 'afs'. If 'afs' is specified then AFS tokens will be\n");
+    msg("# to write to the backup directory.  Valid values are 'nfs',\n");
+    msg("# 'afs', or 'no'. If 'afs' is specified then AFS tokens will be\n");
     msg("# acquired.\n");
-    msg("backup_to_afs = no\n");
+    msg("backup_shared = no\n");
 
     msg("#\n");
     msg("# Maximum size of snapshot file.\n");
@@ -245,11 +262,11 @@ sub display_example_conf {
 # run shell commands
 
 sub run_cmd {
-    my ($timeout_min, $krb_required, @cmd) = @_;
+    my ($timeout_min, $remote_req, @cmd) = @_;
 
-    if ($krb_required) {
+    if ($remote_req) {
         my @new_cmd = ();
-        push @new_cmd, @KCMD, @cmd;
+        push @new_cmd, @RCMD, @cmd;
         @cmd = @new_cmd;
     }
     my $in;
@@ -363,13 +380,9 @@ sub backup_a_snapshot {
     my $tar_file = $CONF->backup_directory() . '/' . fileparse($snap_device);
     $tar_file =~ s/\-snapshot//xms;
     $tar_file .= '.' . $COMP{ $CONF->compression }{'type'};
-    my $tar_action   = 'cf' . $COMP{ $CONF->compression }{'action'};
-    my $bout         = 4 * 60 * 60;
-    my $krb_required = 0;
-    if ($CONF->backup_to_afs) {
-        $krb_required = 1;
-    }
-    msg(run_cmd($bout, $krb_required, 'tar', $tar_action, $tar_file, './'));
+    my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
+    my $bout       = 4 * 60 * 60;
+    msg(run_cmd($bout, 1, 'tar', $tar_action, $tar_file, './'));
 
     # unmount the VM's disk
     msg(run_cmd(10, 0, '/bin/umount', $mount_point));
@@ -393,18 +406,10 @@ sub backup_vm {
     for my $v (@vhost_list) {
         validate_conf($v);
     }
-    my $krb_required = 0;
-    if ($CONF->backup_shared) {
-        $krb_required = 1;
-    }
     for my $vhost (@vhost_list) {
         # copy the configuration file
         my $vm_config = "/etc/xen/${vhost}.cfg";
-        msg(
-            run_cmd(
-                60, $krb_required, 'cp', $vm_config, $CONF->backup_directory()
-            )
-        );
+        msg(run_cmd(60, 1, 'cp', $vm_config, $CONF->backup_directory()));
 
         # Create file containnig LVM information about the disks used
         # by the vm.
@@ -421,7 +426,7 @@ sub backup_vm {
         close $lh
           or croak("ERROR: problem closing $tmp_lvm");
         my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
-        msg(run_cmd(60, $krb_required, 'cp', $tmp_lvm, $vm_lvm));
+        msg(run_cmd(60, 1, 'cp', $tmp_lvm, $vm_lvm));
 
         next if $opt_confonly;
 
@@ -467,11 +472,6 @@ sub restore_vm {
     my @params = @_;
 
     my @vhost_list = host_fqdn(@params);
-
-    my $krb_required = 0;
-    if ($CONF->backup_to_afs) {
-        $krb_required = 1;
-    }
 
     # Perform validation first before we do anything
     for my $vhost (@vhost_list) {
@@ -561,7 +561,7 @@ sub restore_vm {
         }
 
         # Copy the VM configuration file into place on the new host.
-        msg(run_cmd(30, $krb_required, 'cp', $vm_config_new, $vm_config));
+        msg(run_cmd(30, 1, 'cp', $vm_config_new, $vm_config));
 
         # Create lvm disks for this vm
         for my $i (sort keys %lvm_list) {
@@ -675,12 +675,7 @@ sub restore_vm {
                     die("ERROR: fatal error\n");
                 }
                 my $tout = 2 * 60 * 60;
-                msg(
-                    run_cmd(
-                        $tout,     $krb_required, 'tar', $tar_action,
-                        $tar_file, './'
-                    )
-                );
+                msg(run_cmd($tout, 1, 'tar', $tar_action, $tar_file, './'));
                 # unmount the VM's disk
                 chdir('/tmp');
                 msg(run_cmd(30, 0, 'cz-xen', 'umount', $vhost));
@@ -706,7 +701,7 @@ sub restore_vm {
 sub copy_vm {
     my @params = @_;
 
-    if ($CONF->backup_to_afs) {
+    if ($CONF->backup_shared ne 'no') {
         die("ERROR: no need to copy backup when using shared backup\n");
     }
 

@@ -186,15 +186,6 @@ sub read_conf {
 
     # Setup prefix for commands that require Kerberos authentication
     if ($CONF->backup_shared =~ /^afs$/xmsi) {
-        if (!$CONF->krb_keytab) {
-            die("ERROR: missing krb_keytab\n");
-        }
-        if (!$CONF->krb_principal) {
-            die("ERROR: missing krb_principal\n");
-        }
-        if (!$CONF->krb_realm) {
-            die("ERROR: missing krb_realm\n");
-        }
         mgs("INFO: backing using AFS\n");
         @RCMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
         push @RCMD, '-t';
@@ -385,6 +376,7 @@ sub backup_a_snapshot {
     msg(run_cmd($bout, 1, 'tar', $tar_action, $tar_file, './'));
 
     # unmount the VM's disk
+    sleep(5);
     msg(run_cmd(10, 0, '/bin/umount', $mount_point));
     sleep(5);
     msg(run_cmd(10, 0, '/sbin/lvremove', '-f', $snap_device));

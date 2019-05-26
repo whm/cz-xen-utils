@@ -30,6 +30,10 @@ BEGIN {
 sub create_ticket_cache {
     my ($CONF) = @_;
 
+    if ($CONF->krb_principal eq 'none') {
+        die("ERROR: missing krb_principal\n");
+    }
+
     # Use existing tgt_file it one exists
     my $tgtEnv = 'FILE:' . $CONF->tgt_file;
     if (-e $CONF->tgt_file) {
@@ -43,7 +47,13 @@ sub create_ticket_cache {
     my $client = Authen::Krb5::parse_name($CONF->krb_principal);
     my $server = Authen::Krb5::parse_name($tgt);
     my $cc     = Authen::Krb5::cc_resolve($tgtEnv);
-    $cc->initialize($client);
+    $cc->initialize($client)
+      or die 'ERROR: '
+      . 'Problem initializing Kerberos ticket cache, '
+      . "KRB5CCNAME = $tgtEnv, "
+      . 'krb_principal = '
+      . $CONF->krb_principal
+      . "tgt = $tgt";
     my $kt = Authen::Krb5::kt_resolve($CONF->krb_keytab);
     Authen::Krb5::get_in_tkt_with_keytab($client, $server, $kt, $cc)
       or die 'ERROR: '
@@ -104,4 +114,3 @@ Modifications to the software have been made by Bill MacAllister,
 2015-2018.  All rights reserved.
 
 =cut
-

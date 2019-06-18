@@ -47,18 +47,19 @@ sub create_ticket_cache {
     my $client = Authen::Krb5::parse_name($CONF->krb_principal);
     my $server = Authen::Krb5::parse_name($tgt);
     my $cc     = Authen::Krb5::cc_resolve($tgtEnv);
+
+    my $info = "INFO: KRB5CCNAME = $tgtEnv\n";
+    $info .= 'INFO: krb_principal = ' . $CONF->krb_principal . "\n";
+    $info .= "INFO: tgt = $tgt\n";
+
     $cc->initialize($client)
-      or die 'ERROR: '
-      . 'Problem initializing Kerberos ticket cache, '
-      . "KRB5CCNAME = $tgtEnv, "
-      . 'krb_principal = '
-      . $CONF->krb_principal
-      . "tgt = $tgt";
+      or die "ERROR: Problem initializing Kerberos ticket cache\n" . $info;
     my $kt = Authen::Krb5::kt_resolve($CONF->krb_keytab);
     Authen::Krb5::get_in_tkt_with_keytab($client, $server, $kt, $cc)
       or die 'ERROR: '
       . Authen::Krb5::error()
-      . " while getting Kerberos ticket";
+      . " while getting Kerberos ticket\n"
+      . $info;
     $ENV{KRB5CCNAME} = $tgtEnv;
     return;
 }

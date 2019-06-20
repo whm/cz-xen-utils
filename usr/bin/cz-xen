@@ -45,6 +45,7 @@ my $opt_swapsize = '2Gb';
 my $CONF;
 my $DEBUG_TIME = time;
 my $ROLE_DIR   = '/etc/xen-tools/role.d';
+my $CFG_DIR    = '/etc/xen';
 
 ##############################################################################
 # Subroutines
@@ -340,6 +341,97 @@ sub copy_base_files {
 ##############################################################################
 
 # ----------------------------------------------------------------------
+# Maintain auto action for VMs
+
+sub auto_maint {
+    my ($action, $this_host) = @_;
+
+    my %cfg_file = ();
+    opendir(my $dir, $CFG_DIR) or croak("ERROR: problem opening $CFG_DIR\n");
+    while (my $file = readdir($dir)) {
+        if ($file =~ /[.]cfg$/xms) {
+            my $a_host = $file;
+            $a_host =~ s/[.]cfg$//xms;
+            $cfg_file{"${CFG_DIR}/${file}"} = $a_host;
+        }
+    }
+    closedir($dir);
+
+    # Set a default action
+    if (!$action) {
+        $action    = 'show';
+        $this_host = 'ALL';
+    }
+
+    # show auto status for all hosts
+    if ($action eq 'show') {
+        msg("AUTOBOOT Status\n");
+        msg("---------------\n");
+        for my $f (sort keys %cfg_file) {
+            my $h = $cfg_file{$f};
+            if (-e "$CFG_DIR/auto/${h}.cfg") {
+                msg("AUTOBOOT $h\n");
+            } else {
+                msg("no autoboot link for $h\n");
+            }
+        }
+        return;
+    }
+
+    if (!$this_host) {
+        msg("ERROR: an fqdn or ALL must be specified\n");
+        exit 1;
+    }
+
+    # get a list of files to operate on
+    my @file_list = ();
+    if ($this_host eq 'ALL') {
+        for my $f (sort keys %cfg_file) {
+            push @file_list, $f;
+        }
+    } else {
+        my $this_file = "${CFG_DIR}/${this_host}.cfg";
+        if (!-e $this_file) {
+            msg("ERROR: invalid host ($this_host)\n");
+            exit 1;
+        } else {
+            push @file_list, $this_file;
+        }
+    }
+
+    # Perform the operation
+    for my $f (sort @file_list) {
+        my $h              = $cfg_file{$f};
+        my $this_auto_file = "${CFG_DIR}/auto/${h}.cfg";
+        if ($action eq 'on') {
+            if (!-e "$CFG_DIR/auto") {
+                mkdir "$CFG_DIR/auto", 0755
+                  or croak("ERROR: problem creating $CFG_DIR/auth\n");
+            }
+            if (-e $this_auto_file) {
+                msg("INFO: $h already set to AUTOBOOT\n");
+            } else {
+                msg("Setting $h to AUTOBOOT\n");
+                link $f, $this_auto_file
+                  or croak("ERROR: problem link to $f\n");
+            }
+        } elsif ($action eq 'off') {
+            if (-e $this_auto_file) {
+                unlink $this_auto_file
+                  or croak("ERROR: problem removing link $this_auto_file\n");
+            } else {
+                msg("INFO: $h not set to autoboot\n");
+            }
+        } else {
+            msg("ERROR: invalid action $action\n");
+            exit 1;
+        }
+    }
+
+    return;
+}
+
+# ----------------------------------------------------------------------
 # Create a virtual machine
 
 sub create_vm {
@@ -472,7 +564,7 @@ sub delete_vm {
         msg("INFO: To delete the VM complete add the --confirm switch to \n");
         msg("INFO: the command line.\n");
 
-        croak('ERROR: Refusing to delete VM without --confirm');
+        die("ERROR: Refusing to delete VM without --confirm\n");
     }
 
     # Make sure we know what to delete
@@ -553,8 +645,8 @@ sub find_running {
         }
         my $stat = remctl($xhost, undef, undef, @cl);
         if ($stat->error) {
-            print('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
-            print('ERROR: ' . $stat->error . "\n");
+            msg('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
+            msg('ERROR: ' . $stat->error . "\n");
             next;
         }
         my @host_list = split "\n", $stat->stdout;
@@ -622,8 +714,8 @@ sub find_any_vm {
         }
         my $stat = remctl($xhost, undef, undef, @cl);
         if ($stat->error) {
-            print('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
-            print('ERROR: ' . $stat->error . "\n");
+            msg('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
+            msg('ERROR: ' . $stat->error . "\n");
             next;
         }
         my @lines = split "\n", $stat->stdout;
@@ -804,11 +896,22 @@ sub find_toolset {
 sub show_role {
     my ($role) = @_;
 
-    my $role_file = "$ROLE_DIR/$role";
+    if (!$role || $role eq 'ALL') {
+        opendir(my $dir, $ROLE_DIR)
+          or croak("ERROR: problem opening $ROLE_DIR\n");
+        while (my $file = readdir($dir)) {
+            if ($file !~ /^[.]/xms) {
+                msg("$file\n");
+            }
+        }
+        closedir($dir);
+        return;
+    }
 
+    my $role_file = "$ROLE_DIR/$role";
     if (-e $role_file) {
         my $rf;
-        open $rf, '<', $role_file or croak("Cannot open $role_file");
+        open $rf, '<', $role_file or croak("Cannot open $role_file\n");
         while (<$rf>) {
             my $line = $_;
             print $_;
@@ -1114,20 +1217,26 @@ if (!$opt_role && $action eq 'new') {
 
 my $vhost;
 my $role;
+my $auto;
+my $auto_host;
 
 if ($ARGV[1]) {
     if ($action eq 'showrole') {
         $role = $ARGV[1];
+    } elsif ($action eq 'auto') {
+        if (scalar(@ARGV) > 3) {
+            warn("Too many arguments on the command line\n");
+            exit(1);
+        }
+        $auto      = $ARGV[1];
+        $auto_host = $ARGV[2];
     } else {
         $vhost = $ARGV[1];
+        if ($action ne 'find' && scalar(@ARGV) > 2) {
+            warn("Too many arguments on the command line\n");
+            exit(1);
+        }
     }
-}
-
-# Die if we have too much on the command line.  This is gross check
-# just to catch egregeous errors.
-if ($action ne 'find' && scalar(@ARGV) > 2) {
-    warn("Too many arguments on the command line\n");
-    exit(1);
 }
 
 # Set the environment so and scripts that are called have the
@@ -1138,7 +1247,8 @@ $ENV{PATH} = $CONF->command_path();
 find_toolset();
 
 # Do something
-if    ($action eq 'basefiles') { copy_base_files($vhost); }
+if ($action eq 'auto') { auto_maint($auto, $auto_host); }
+elsif ($action eq 'basefiles') { copy_base_files($vhost); }
 elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
 elsif ($action eq 'delete')    { delete_vm($vhost); }
 elsif ($action eq 'destroy')   { xtool_host_action($vhost, $action); }
@@ -1172,6 +1282,7 @@ cz-xen
 
 =head1 SYNOPSIS
 
+     cz-xen auto [on|off|show] [<vm-name>|ALL]
      cz-xen basefiles <vm-name>
      cz-xen boot <vm-name>
      cz-xen delete <vm-name>
@@ -1203,11 +1314,11 @@ are required.
 
 =over 4
 
-=item basefiles <vm-name>
+=item auto [show|on|off] [<vm name>|ALL]
 
-Copy the base files defined in the setup file from the dom0 system to
-the virtual system.  The default setup file is /etc/xen/cz-setup.conf
-and can be overridden with the --setup switch.
+The auto action sets, resets, or shows autoboot status.  If no arguments
+are given the default is to "show ALL".  The show action ignores the
+second argument and always displays the autoboot state for all VMs.
 
 =item basefiles <vm-name>
 
@@ -1280,6 +1391,12 @@ Reboot a virtual machine.
 =item show
 
 Show the currently executing virtual machines.
+
+=item showrole [role|ALL]
+
+If not argument or ALL is supplied then a list of role files is display.
+If an individual role is supplied then the contents of that role are
+displayed.
 
 =item shutdown <vm-name>
 

@@ -16,10 +16,6 @@ Script cz-xen-backup
   AFS tokens.  The script will copy a machine from one xen host to
   another and boot the guest when the migration is complete.
 
-Script cz-xen-auto
-
-  This script manages the auto restart links for Xen guests.
-
 Script cz-console
 
   A trivial script to access a guest's console.

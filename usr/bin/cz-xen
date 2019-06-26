@@ -7,6 +7,7 @@
 
 use AppConfig qw(:argcount :expand);
 use Carp;
+use File::Basename;
 use File::Copy;
 use Getopt::Long;
 use IPC::Run qw( run timeout );
@@ -16,7 +17,6 @@ use Net::Remctl;
 use Pod::Usage;
 use CZ::Xentools;
 use strict;
-use Sys::Syslog;
 
 my $opt_arch = 'amd64';
 my $opt_confirm;
@@ -51,6 +51,7 @@ my $CFG_DIR    = '/etc/xen';
 # Subroutines
 ##############################################################################
 
+# ----------------------------------------------------------------------
 # output debugging information
 
 sub dbg {
@@ -63,15 +64,7 @@ sub dbg {
     return;
 }
 
-# output information
-
-sub msg {
-    (my $tmp) = @_;
-    print {*STDOUT} $tmp
-      or croak("Problem writing to STDOUT\n");
-    return;
-}
-
+# ----------------------------------------------------------------------
 # Validate the ip address that was input.
 
 sub validate_ip {
@@ -86,6 +79,7 @@ sub validate_ip {
     return;
 }
 
+# ----------------------------------------------------------------------
 # Run a shell command line
 
 sub run_cmd {
@@ -96,7 +90,7 @@ sub run_cmd {
     my $err;
     my $cmd_line = 'Executing: ' . join(' ', @cmd);
     msg("$cmd_line\n");
-    syslog("NOTICE", $cmd_line);
+    cz_syslog($cmd_line);
     eval { run(\@cmd, \$in, \$out, \$err, timeout($timeout)); };
     if ($@) {
         if ($err) {
@@ -117,6 +111,7 @@ sub run_cmd {
     return $out;
 }
 
+# ----------------------------------------------------------------------
 # Lookup IP address
 
 sub lookup_ip {
@@ -135,6 +130,7 @@ sub lookup_ip {
     return $ip;
 }
 
+# ----------------------------------------------------------------------
 # Validate the xen configuration file
 
 sub validate_xen_conf {
@@ -147,6 +143,7 @@ sub validate_xen_conf {
     return $conf_file;
 }
 
+# ----------------------------------------------------------------------
 # Read the setup configuration file if it exists
 
 sub read_conf {
@@ -220,6 +217,9 @@ sub read_conf {
     return;
 }
 
+# ----------------------------------------------------------------------
+# Display example configuration file
+
 sub example_conf {
 
     msg("# ----------------------------------------------------\n");
@@ -262,6 +262,7 @@ sub example_conf {
     return;
 }
 
+# ----------------------------------------------------------------------
 # Take an array contain elements like '/in/path to /out/path' and
 # return a hash of the form $hash{'/in/path'} = '/out/path'.
 
@@ -276,7 +277,7 @@ sub get_install_paths {
         $ps =~ s/\s\s+/ /xmsg;
         my ($in, $out) = split /\s/, $ps;
         if (!$out) {
-            print "Skipping copy line: $ps\n";
+            msg("Skipping copy line: $ps\n");
         } else {
             $paths{$in} = $out;
         }
@@ -284,6 +285,7 @@ sub get_install_paths {
     return %paths;
 }
 
+# ----------------------------------------------------------------------
 # Copy a base set of configuration files to the vm
 
 sub copy_base_files {
@@ -539,7 +541,8 @@ sub create_vm {
     }
     msg("Be patient this takes time ...\n");
     my $create_timeout = 60 * 15;
-    my $out = run_cmd($create_timeout, @cmd);
+    my $cmd_line       = join ' ', @cmd;
+    my $out            = run_cmd_tty($cmd_line, $create_timeout);
 
     msg($out);
 
@@ -914,7 +917,7 @@ sub show_role {
         open $rf, '<', $role_file or croak("Cannot open $role_file\n");
         while (<$rf>) {
             my $line = $_;
-            print $_;
+            msg($_);
         }
         close $rf or msg("WARN: Problem closing $role_file");
     } else {
@@ -1198,7 +1201,7 @@ my $action = $ARGV[0];
 
 # read the configuration file and setup syslog
 read_conf();
-openlog('cz-xen', 'pid', 'local3');
+cz_init_tools(basename($0));
 
 # Set the default for a role
 my $role_default = "cz-$opt_dist";
@@ -1550,6 +1553,6 @@ This software was developed for use at Stanford University 2012-2014.
 All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2018.  All rights reserved.
+2015-2019.  All rights reserved.
 
 =cut

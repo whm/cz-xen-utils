@@ -1,6 +1,6 @@
 # ------------------------------------------------------------------------
 # Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2018 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2019 Bill MacAllister <bill@ca-zephyr.org>
 #
 # This module is used by Xen support routines
 
@@ -8,7 +8,10 @@ package CZ::Xentools;
 
 use Authen::Krb5;
 use Carp;
+use File::Basename;
+use IPC::Run qw( start pump finish timeout );
 use strict;
+use Sys::Syslog;
 
 BEGIN {
 
@@ -17,14 +20,42 @@ BEGIN {
     our @ISA    = qw(Exporter);
     our @EXPORT = qw(
       create_ticket_cache
+      cz_syslog
+      cz_init_tools
       destroy_ticket_cache
+      msg
+      run_cmd_tty
     );
 
     our $VERSION = '1';
 
 }
 
-# ------------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# Initialize CA tools
+
+sub cz_init_tools {
+    my ($id) = @_;
+    if (!$id) {
+        $id = basename($0);
+    }
+    openlog($id, 'pid', 'local3');
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Write a syslog message
+
+sub cz_syslog {
+    my ($msg, $level) = @_;
+    if (!$level) {
+        $level = 'NOTICE';
+    }
+    syslog($level, $msg);
+    return;
+}
+
+# ----------------------------------------------------------------------
 # Create kerberos ticket cache
 
 sub create_ticket_cache {
@@ -75,6 +106,60 @@ sub destroy_ticket_cache {
     return;
 }
 
+# ----------------------------------------------------------------------
+# output information
+
+sub msg {
+    (my $tmp) = @_;
+    print {*STDOUT} $tmp
+      or croak("Problem writing to STDOUT\n");
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Run a command using a pseudo terminal.  Using a terminal allows
+# for progress displays to be returned as the command executes.
+# Default timeout is 10 minutes;
+
+sub run_cmd_tty {
+    my ($cmd, $timeout) = @_;
+
+    if (!$timeout) {
+        $timeout = 600;
+    }
+
+    # Initialize shell session
+    my @bash = qw( bash );
+    my $handle;
+    my $in;
+    my $out;
+    my $err;
+    $handle = start \@bash, '<pty<', \$in, '>pty>', \$out, \$err,
+      timeout($timeout);
+
+    # Send the command and print any output
+    $in .= "$cmd ; echo ''; echo 'ENDOFCOMMAND'\n";
+    until ($out =~ /ENDOFCOMMAND\n/g) {
+        pump $handle;
+        my $display = $out;
+        my @lines = split /\n/, $display;
+        for my $l (@lines) {
+            if ($l =~ /^\s*\d/xms) {
+                msg($l);
+            }
+        }
+    }
+
+    # Close bash session
+    my $info_msg = "INFO: command = $cmd";
+    finish $handle or die "$info_msg\nERROR: bash returned $?";
+    if ($err) {
+        msg("$info_msg\n");
+        msg("ERROR: command returned $err\n");
+    }
+    return;
+}
+
 END { }
 
 1;
@@ -88,6 +173,8 @@ CZ::Xentools - Utility routines for the Xen support
     use CZ::Xentools;
 
     create_ticket_cache();
+    destroy_ticket_cache();
+    run_cmd_tty(<command>, <timeout>);
 
 =head1 DESCRIPTION
 
@@ -102,6 +189,15 @@ administration scripts.
 
 Create a kerberos ticket cache.
 
+=item B<destroy_ticket_cache>
+
+Destroy a kerberos ticket cache.
+
+=item B<run_cmd_tty(command, timeout)>
+
+Run a command in a pseudo terminal and display output as the
+command executes.
+
 =head1 AUTHOR
 
 Bill MacAllister <bill@ca-zephyr.org>
@@ -112,6 +208,6 @@ This software was originally developed for use at Stanford University
 2012-2014.  All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2018.  All rights reserved.
+2015-2019.  All rights reserved.
 
 =cut

@@ -63,15 +63,7 @@ sub dbg {
     return;
 }
 
-# output information
-
-sub msg {
-    (my $tmp) = @_;
-    print {*STDOUT} $tmp
-      or croak("Problem writing to STDOUT\n");
-    return;
-}
-
+# ----------------------------------------------------------------------
 # Validate the domain configuration file
 
 sub validate_conf {
@@ -83,6 +75,7 @@ sub validate_conf {
     return $conf_file;
 }
 
+# ----------------------------------------------------------------------
 # Return FQDNs for a list of hosts
 
 sub host_fqdn {
@@ -98,6 +91,7 @@ sub host_fqdn {
     return @return_list;
 }
 
+# ----------------------------------------------------------------------
 # Read the configuration file
 
 sub read_conf {
@@ -204,6 +198,7 @@ sub read_conf {
     return;
 }
 
+# ----------------------------------------------------------------------
 # Display example configuration file
 
 sub display_example_conf {
@@ -250,6 +245,7 @@ sub display_example_conf {
     return;
 }
 
+# ----------------------------------------------------------------------
 # run shell commands
 
 sub run_cmd {
@@ -279,6 +275,7 @@ sub run_cmd {
     return $out;
 }
 
+# ----------------------------------------------------------------------
 # Find the disks listed in a xen configuration file
 
 sub get_xen_disks {
@@ -315,6 +312,7 @@ sub get_xen_disks {
     return @disk_list;
 }
 
+# ----------------------------------------------------------------------
 # Create a snapshot
 
 sub create_a_snapshot {
@@ -334,6 +332,7 @@ sub create_a_snapshot {
     return $snapshot_device;
 }
 
+# ----------------------------------------------------------------------
 # mount the VM's snapshot read only, then create a tar ball
 
 sub backup_a_snapshot {
@@ -373,13 +372,12 @@ sub backup_a_snapshot {
     $tar_file .= '.' . $COMP{ $CONF->compression }{'type'};
     my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
     my $bout       = 4 * 60 * 60;
-    msg(run_cmd($bout, 1, 'tar', $tar_action, $tar_file, './'));
+    my $cmd        = "tar ${tar_action} ${tar_file} ./ ; cd /";
+    run_cmd_tty($cmd, 20 * 60);
 
     # unmount the VM's disk
-    sleep(5);
-    msg(run_cmd(10, 0, '/bin/umount', $mount_point));
-    sleep(5);
-    msg(run_cmd(10, 0, '/sbin/lvremove', '-f', $snap_device));
+    run_cmd_tty("/bin/umount ${mount_point}");
+    run_cmd_tty("/sbin/lvremove -f ${snap_device}");
 
     return;
 }
@@ -401,9 +399,10 @@ sub backup_vm {
     for my $vhost (@vhost_list) {
         # copy the configuration file
         my $vm_config = "/etc/xen/${vhost}.cfg";
-        msg(run_cmd(60, 1, 'cp', $vm_config, $CONF->backup_directory()));
+        my $cmd_line  = "cp ${vm_config} " . $CONF->backup_directory();
+        run_cmd_tty($cmd_line);
 
-        # Create file containnig LVM information about the disks used
+        # Create file containing LVM information about the disks used
         # by the vm.
         my $tmp_lvm = "/tmp/${vhost}$$.lvm";
         msg("Writing LVM data to $tmp_lvm ...\n");
@@ -417,8 +416,9 @@ sub backup_vm {
         }
         close $lh
           or croak("ERROR: problem closing $tmp_lvm");
-        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
-        msg(run_cmd(60, 1, 'cp', $tmp_lvm, $vm_lvm));
+        my $vm_lvm   = $CONF->backup_directory() . "/${vhost}.lvm";
+        my $cmd_line = msg("cp $tmp_lvm $vm_lvm");
+        run_cmd_tty($cmd_line);
 
         next if $opt_confonly;
 
@@ -754,7 +754,8 @@ sub copy_vm {
             push @this_cmd, 'scp';
             push @this_cmd, $f;
             push @this_cmd, "$to:" . $CONF->backup_directory;
-            msg(run_cmd(600, 1, @this_cmd));
+            my $cmd_line = join ' ', @this_cmd;
+            run_cmd_tty($cmd_line, 10 * 60);
         }
         msg("Copy of $vhost complete\n");
     }
@@ -878,6 +879,7 @@ if ($action ne 'list' && scalar(@params) == 0) {
 }
 
 read_conf();
+cz_init_tools(basename($0));
 
 # Do something
 if    ($action eq 'backup')  { backup_vm(@params); }

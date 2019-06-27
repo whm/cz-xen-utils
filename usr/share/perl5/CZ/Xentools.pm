@@ -9,7 +9,6 @@ package CZ::Xentools;
 use Authen::Krb5;
 use Carp;
 use File::Basename;
-use IPC::Run qw( start pump finish timeout );
 use strict;
 use Sys::Syslog;
 
@@ -24,20 +23,25 @@ BEGIN {
       cz_init_tools
       destroy_ticket_cache
       msg
-      run_cmd_tty
     );
 
     our $VERSION = '1';
 
 }
 
+my $DEBUG;
+
 # ----------------------------------------------------------------------
 # Initialize CA tools
 
 sub cz_init_tools {
-    my ($id) = @_;
+    my ($id, $debug) = @_;
     if (!$id) {
         $id = basename($0);
+    }
+    if ($debug) {
+        $DEBUG = 1;
+        msg("DEBUG: Starting debugging output\n");
     }
     openlog($id, 'pid', 'local3');
     return;
@@ -116,50 +120,6 @@ sub msg {
     return;
 }
 
-# ----------------------------------------------------------------------
-# Run a command using a pseudo terminal.  Using a terminal allows
-# for progress displays to be returned as the command executes.
-# Default timeout is 10 minutes;
-
-sub run_cmd_tty {
-    my ($cmd, $timeout) = @_;
-
-    if (!$timeout) {
-        $timeout = 600;
-    }
-
-    # Initialize shell session
-    my @bash = qw( bash );
-    my $handle;
-    my $in;
-    my $out;
-    my $err;
-    $handle = start \@bash, '<pty<', \$in, '>pty>', \$out, \$err,
-      timeout($timeout);
-
-    # Send the command and print any output
-    $in .= "$cmd ; echo ''; echo 'ENDOFCOMMAND'\n";
-    until ($out =~ /ENDOFCOMMAND\n/g) {
-        pump $handle;
-        my $display = $out;
-        my @lines = split /\n/, $display;
-        for my $l (@lines) {
-            if ($l =~ /^\s*\d/xms) {
-                msg($l);
-            }
-        }
-    }
-
-    # Close bash session
-    my $info_msg = "INFO: command = $cmd";
-    finish $handle or die "$info_msg\nERROR: bash returned $?";
-    if ($err) {
-        msg("$info_msg\n");
-        msg("ERROR: command returned $err\n");
-    }
-    return;
-}
-
 END { }
 
 1;
@@ -174,7 +134,9 @@ CZ::Xentools - Utility routines for the Xen support
 
     create_ticket_cache();
     destroy_ticket_cache();
-    run_cmd_tty(<command>, <timeout>);
+    cz_init_tools(<script>, <debug flag>);
+    cz_syslog(<text>, <syslog level>);
+    msg(<text>);
 
 =head1 DESCRIPTION
 
@@ -193,10 +155,19 @@ Create a kerberos ticket cache.
 
 Destroy a kerberos ticket cache.
 
-=item B<run_cmd_tty(command, timeout)>
+=item B<cz_init_tools(<script name>, <debug flag>)
 
-Run a command in a pseudo terminal and display output as the
-command executes.
+Both parameters are optional.  This routine initializes the syslog
+interface and controls debugging output from CZ::Xentools routines.
+
+=item B<cz_syslog(<text>, <syslog level>)
+
+Send text to syslog.  The syslog level is optional and if not set 
+the level is NOTICE.
+
+=item B<msg(<text>)
+
+Send text to STDOUT trapping any errors.
 
 =head1 AUTHOR
 

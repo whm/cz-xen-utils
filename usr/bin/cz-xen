@@ -541,8 +541,7 @@ sub create_vm {
     }
     msg("Be patient this takes time ...\n");
     my $create_timeout = 60 * 15;
-    my $cmd_line       = join ' ', @cmd;
-    my $out            = run_cmd_tty($cmd_line, $create_timeout);
+    my $out = run_cmd($create_timeout, @cmd);
 
     msg($out);
 
@@ -1201,7 +1200,7 @@ my $action = $ARGV[0];
 
 # read the configuration file and setup syslog
 read_conf();
-cz_init_tools(basename($0));
+cz_init_tools(basename($0), $opt_debug);
 
 # Set the default for a role
 my $role_default = "cz-$opt_dist";

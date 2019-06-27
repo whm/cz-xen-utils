@@ -261,7 +261,7 @@ sub run_cmd {
     my $err;
     my $cmd_str = join(q{ }, @cmd);
     my $cmd_timeout = 60 * $timeout_min;
-    msg("Executing $cmd_str\n");
+    msg("Executing: $cmd_str\n");
     eval { run(\@cmd, \$in, \$out, \$err, timeout($cmd_timeout)); };
 
     if ($@) {
@@ -366,18 +366,18 @@ sub backup_a_snapshot {
 
     # create the backup
     msg("Creating the backup\n");
-    chdir($mount_point);
+    chdir($mount_point) || croak("ERROR: problem cd'ing to $mount_point\n");
     my $tar_file = $CONF->backup_directory() . '/' . fileparse($snap_device);
     $tar_file =~ s/\-snapshot//xms;
     $tar_file .= '.' . $COMP{ $CONF->compression }{'type'};
     my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
     my $bout       = 4 * 60 * 60;
-    my $cmd        = "tar ${tar_action} ${tar_file} ./ ; cd /";
-    run_cmd_tty($cmd, 20 * 60);
+    run_cmd($bout, 1, 'tar', $tar_action, $tar_file, './');
+    chdir('/tmp') || croak("ERROR: problem cd'ing to /tmp\n");
 
     # unmount the VM's disk
-    run_cmd_tty("/bin/umount ${mount_point}");
-    run_cmd_tty("/sbin/lvremove -f ${snap_device}");
+    msg(run_cmd(10, 0, 'umount', $mount_point));
+    msg(run_cmd(10, 0, 'lvremove', '-f', $snap_device));
 
     return;
 }
@@ -397,10 +397,11 @@ sub backup_vm {
         validate_conf($v);
     }
     for my $vhost (@vhost_list) {
+        my @cmd = ();
         # copy the configuration file
         my $vm_config = "/etc/xen/${vhost}.cfg";
-        my $cmd_line  = "cp ${vm_config} " . $CONF->backup_directory();
-        run_cmd_tty($cmd_line);
+        @cmd = ('cp', '-v', ${vm_config}, $CONF->backup_directory());
+        msg(run_cmd(60, 1, @cmd));
 
         # Create file containing LVM information about the disks used
         # by the vm.
@@ -416,9 +417,9 @@ sub backup_vm {
         }
         close $lh
           or croak("ERROR: problem closing $tmp_lvm");
-        my $vm_lvm   = $CONF->backup_directory() . "/${vhost}.lvm";
-        my $cmd_line = msg("cp $tmp_lvm $vm_lvm");
-        run_cmd_tty($cmd_line);
+        my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
+        @cmd = ('cp', '-v', $tmp_lvm, $vm_lvm);
+        msg(run_cmd(60, 1, @cmd));
 
         next if $opt_confonly;
 
@@ -754,8 +755,7 @@ sub copy_vm {
             push @this_cmd, 'scp';
             push @this_cmd, $f;
             push @this_cmd, "$to:" . $CONF->backup_directory;
-            my $cmd_line = join ' ', @this_cmd;
-            run_cmd_tty($cmd_line, 10 * 60);
+            msg(run_cmd_tty(10, 1, @this_cmd));
         }
         msg("Copy of $vhost complete\n");
     }
@@ -879,7 +879,7 @@ if ($action ne 'list' && scalar(@params) == 0) {
 }
 
 read_conf();
-cz_init_tools(basename($0));
+cz_init_tools(basename($0), $opt_debug);
 
 # Do something
 if    ($action eq 'backup')  { backup_vm(@params); }

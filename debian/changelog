@@ -1,9 +1,8 @@
 cz-xen-utils (37) unstable; urgency=medium
 
-  * Add routine to allow commands to be run in a pseudo terminal.  This
-    is important for long running commands with progress displays.
   * Add an init routine to CZ::Xentools that initializes syslog.
   * Move msg routine into CZ::Xentools.
+  * Fix bug in un-mounting the snapshot after a backup.
 
  -- Bill MacAllister <bill@ca-zephyr.org>  Wed, 26 Jun 2019 22:58:09 +0000
 

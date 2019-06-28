@@ -1,3 +1,9 @@
+cz-xen-utils (38) unstable; urgency=medium
+
+  * Correct incorrect reference to run_cmd_tty in xen-backup script.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Fri, 28 Jun 2019 06:51:37 +0000
+
 cz-xen-utils (37) unstable; urgency=medium
 
   * Add an init routine to CZ::Xentools that initializes syslog.

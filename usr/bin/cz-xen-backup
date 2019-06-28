@@ -755,7 +755,7 @@ sub copy_vm {
             push @this_cmd, 'scp';
             push @this_cmd, $f;
             push @this_cmd, "$to:" . $CONF->backup_directory;
-            msg(run_cmd_tty(10, 1, @this_cmd));
+            msg(run_cmd(10, 1, @this_cmd));
         }
         msg("Copy of $vhost complete\n");
     }

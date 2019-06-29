@@ -34,16 +34,16 @@ my @RCMD       = ();
 
 my %COMP = (
     NONE => {
-        action => '',
-        type   => 'tar'
+        compression => '',
+        type        => 'tar'
     },
     z => {
-        action => 'z',
-        type   => 'tgz'
+        compression => 'gzip',
+        type        => 'tar.gz'
     },
     J => {
-        action => 'J',
-        type   => 'xz'
+        compression => 'xz',
+        type        => 'tar.xz'
     }
 );
 
@@ -212,7 +212,7 @@ sub display_example_conf {
 
     msg("#\n");
     msg("# Compression to use when creating the disk files.\n");
-    msg("# Valid values are 'NONE', 'J', or 'z'\n");
+    msg("# Valid values are 'NONE', 'gzip', or 'xz'\n");
     msg("compression = NONE\n");
 
     msg("#\n");
@@ -370,13 +370,21 @@ sub backup_a_snapshot {
     my $tar_file = $CONF->backup_directory() . '/' . fileparse($snap_device);
     $tar_file =~ s/\-snapshot//xms;
     $tar_file .= '.' . $COMP{ $CONF->compression }{'type'};
-    my $tar_action = 'cf' . $COMP{ $CONF->compression }{'action'};
-    my $bout       = 4 * 60 * 60;
-    run_cmd($bout, 1, 'tar', $tar_action, $tar_file, './');
+    my @cmd = ('tar');
+    push @cmd, '--create';
+    push @cmd, '--file', $tar_file;
+    push @cmd, '--' . $COMP{ $CONF->compression }{'compression'};
+    push @cmd, '--numeric-owner';
+    push @cmd, '--preserve-permissions';
+    push @cmd, '--same-owner';
+    push @cmd, './';
+    my $bout = 4 * 60 * 60;
+    run_cmd($bout, 1, @cmd);
     chdir('/tmp') || croak("ERROR: problem cd'ing to /tmp\n");
 
     # unmount the VM's disk
-    msg(run_cmd(10, 0, 'umount', $mount_point));
+    msg(run_cmd(10, 0, 'umount',   $mount_point));
+    msg(run_cmd(10, 0, 'rmdir',    $mount_point));
     msg(run_cmd(10, 0, 'lvremove', '-f', $snap_device));
 
     return;
@@ -667,8 +675,16 @@ sub restore_vm {
                     msg("ERROR: tar file not found in list $tar_list\n");
                     die("ERROR: fatal error\n");
                 }
+                my @cmd = ('tar');
+                push @cmd, '--extract';
+                push @cmd, '--file', $tar_file;
+                push @cmd, '--' . $COMP{ $CONF->compression }{'compression'};
+                push @cmd, '--numeric-owner';
+                push @cmd, '--preserve-permissions';
+                push @cmd, '--same-owner';
+                push @cmd, './';
                 my $tout = 2 * 60 * 60;
-                msg(run_cmd($tout, 1, 'tar', $tar_action, $tar_file, './'));
+                msg(run_cmd($tout, 1, @cmd));
                 # unmount the VM's disk
                 chdir('/tmp');
                 msg(run_cmd(30, 0, 'cz-xen', 'umount', $vhost));

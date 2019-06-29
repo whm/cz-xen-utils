@@ -1,3 +1,11 @@
+cz-xen-utils (39) unstable; urgency=medium
+
+  * Correct tar handling of ownership of file ownership.  Since
+    tar is being run in the context of the hypervisor ownerships
+    should not be set using the hypervisor's list of UIDs.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sat, 29 Jun 2019 19:23:20 +0000
+
 cz-xen-utils (38) unstable; urgency=medium
 
   * Correct incorrect reference to run_cmd_tty in xen-backup script.

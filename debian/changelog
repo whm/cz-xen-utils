@@ -1,3 +1,10 @@
+cz-xen-utils (40) unstable; urgency=medium
+
+  * Correct handling of tar command line switches for compression in
+    cz-xen-backup and update the example configuration file.
+
+ -- Bill MacAllister <whm@dropbox.com>  Wed, 03 Jul 2019 06:29:36 +0000
+
 cz-xen-utils (39) unstable; urgency=medium
 
   * Correct tar handling of ownership of file ownership.  Since

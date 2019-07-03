@@ -212,7 +212,7 @@ sub display_example_conf {
 
     msg("#\n");
     msg("# Compression to use when creating the disk files.\n");
-    msg("# Valid values are 'NONE', 'gzip', or 'xz'\n");
+    msg("# Valid values are 'NONE', 'z', or 'J'\n");
     msg("compression = NONE\n");
 
     msg("#\n");
@@ -373,7 +373,9 @@ sub backup_a_snapshot {
     my @cmd = ('tar');
     push @cmd, '--create';
     push @cmd, '--file', $tar_file;
-    push @cmd, '--' . $COMP{ $CONF->compression }{'compression'};
+    if ($COMP{ $CONF->compression }{'compression'}) {
+        push @cmd, '--' . $COMP{ $CONF->compression }{'compression'};
+    }
     push @cmd, '--numeric-owner';
     push @cmd, '--preserve-permissions';
     push @cmd, '--same-owner';
@@ -678,7 +680,7 @@ sub restore_vm {
                 my @cmd = ('tar');
                 push @cmd, '--extract';
                 push @cmd, '--file', $tar_file;
-                push @cmd, '--' . $COMP{ $CONF->compression }{'compression'};
+                push @cmd, '--auto-compress';
                 push @cmd, '--numeric-owner';
                 push @cmd, '--preserve-permissions';
                 push @cmd, '--same-owner';

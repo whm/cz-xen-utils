@@ -202,6 +202,41 @@ sub read_conf {
             DEFAULT  => '/tmp/cz-xen-backup-' . $$ . '.tgt'
         }
     );
+    $CONF->define(
+        'timeout_action',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '2'
+        }
+    );
+    $CONF->define(
+        'timeout_delete',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '5'
+        }
+    );
+    $CONF->define(
+        'timeout_list',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '2'
+        }
+    );
+    $CONF->define(
+        'timeout_mount',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '2'
+        }
+    );
+    $CONF->define(
+        'timeout_new',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '30'
+        }
+    );
     $CONF->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
 
     # Read the configuration file if there is one
@@ -244,6 +279,13 @@ sub example_conf {
     msg("xen_server = server1.domain.top\n");
     msg("xen_server = server2.domain.top\n");
     msg("xen_server = server3.domain.top\n");
+    msg("#\n");
+    msg("# The timeout unit of measure is minutes\n");
+    msg("timeout_action = 2\n");
+    msg("timeout_delete = 5\n");
+    msg("timeout_list = 2\n");
+    msg("timeout_mount = 2\n");
+    msg("timeout_new = 30\n");
     msg("#\n");
     msg("# ----------------------------------------------------\n");
     msg("# OBSOLETE Configuration elements\n");
@@ -540,7 +582,7 @@ sub create_vm {
         push @cmd, "--install-method=${opt_method}";
     }
     msg("Be patient this takes time ...\n");
-    my $create_timeout = 60 * 15;
+    my $create_timeout = 60 * $CONF->timeout_new();
     my $out = run_cmd($create_timeout, @cmd);
 
     msg($out);
@@ -573,7 +615,7 @@ sub delete_vm {
     validate_xen_conf($vhost);
 
     # set timeout for command execution
-    my $cmd_timeout = 60 * 2;
+    my $cmd_timeout = 60 * $CONF->timeout_delete();
 
     # destroy it first if it is running
     my @cmd = ($opt_toolset, 'list');
@@ -813,7 +855,7 @@ sub list_dists {
 sub list_freedisk_space {
 
     my @cmd         = ('/sbin/vgdisplay');
-    my $cmd_timeout = 30;
+    my $cmd_timeout = 60 * $CONF->timeout_list();
     my $out         = run_cmd($cmd_timeout, @cmd);
     my @out_lines   = split /\n/, $out;
     for my $z (@out_lines) {
@@ -832,7 +874,7 @@ sub list_freedisk_space {
 sub list_freemem {
 
     my @cmd         = ('/usr/sbin/xl', 'info');
-    my $cmd_timeout = 60 * 2;
+    my $cmd_timeout = 60 * $CONF->timeout_list();
     my $out         = run_cmd($cmd_timeout, @cmd);
     my @lines       = split /\n/, $out;
     msg("Memory units are megabytes.\n");
@@ -982,7 +1024,7 @@ sub list_vm_disks {
 sub list_vms {
     my ($vm)        = @_;
     my @cmd         = ('/usr/bin/xen-list-images');
-    my $cmd_timeout = 60 * 2;
+    my $cmd_timeout = 60 * $CONF->timeout_list();
     my $out = run_cmd($cmd_timeout, @cmd);
     if ($vm) {
         my @lines = split '\n', $out;
@@ -1067,7 +1109,7 @@ sub mount_vm_disk {
     if ($opt_moptions) {
         push @cmd, '-o', $opt_moptions;
     }
-    my $cmd_timeout = 60;
+    my $cmd_timeout = 60 * $CONF->timeout_mount();
     my $out = run_cmd($cmd_timeout, @cmd);
     msg($out);
 
@@ -1095,7 +1137,7 @@ sub umount_vm_disk {
 
     # Dismount the disk
     my @cmd            = ('umount', $vm_mount_point);
-    my $umount_timeout = 60;
+    my $umount_timeout = 60 * $CONF->timeout_mount();
     my $out            = run_cmd($umount_timeout, @cmd);
     msg($out);
     rmdir($vm_mount_point)
@@ -1110,7 +1152,7 @@ sub xtool_action {
     my ($action) = @_;
 
     my @cmd         = ($opt_toolset, $action);
-    my $cmd_timeout = 60 * 2;
+    my $cmd_timeout = 60 * $CONF->timeout_action;
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
     return;
@@ -1135,7 +1177,7 @@ sub xtool_host_action {
 
     # Perform the requested action
     my @cmd         = ($opt_toolset, $action, $vhost);
-    my $cmd_timeout = 60 * 2;
+    my $cmd_timeout = 60 * $CONF->timeout_action();
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
     return;
@@ -1152,7 +1194,7 @@ sub xtool_conf_action {
     my $conf_file = validate_xen_conf($vhost);
 
     my @cmd         = ($opt_toolset, 'create', $conf_file);
-    my $cmd_timeout = 60 * 2;
+    my $cmd_timeout = 60 * $CONF->timeout_action();
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
     return;

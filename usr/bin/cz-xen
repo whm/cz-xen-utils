@@ -677,9 +677,12 @@ sub find_running {
 
     my $cnt = 1;
     my @report;
+    msg('Searching ' . scalar(@{ $CONF->xen_server }) . ' hosts: ');
     for my $xhost (sort(@{ $CONF->xen_server })) {
+        my $host_found = 0;
         print("$cnt ");
         $cnt++;
+
         my @cl = ();
         push @cl, 'xen', 'show';
         if ($opt_debug) {
@@ -718,20 +721,29 @@ sub find_running {
             }
         } while ($output->type eq 'output');
         if ($output_data) {
-            push @report, "$xhost\n";
             my @host_list = split "\n", $output_data;
             for my $h (@host_list) {
                 if ($h =~ m/^(\S+)\s+(\d+)\s+(\d+)/xms) {
                     my $vhost = $1;
                     my $id    = $2;
                     my $mem   = $3;
-                    push @report, sprintf("  %4s %s\n", $vhost, $id);
+                    for my $r (@regex_list) {
+                        if ($vhost =~ /$r/xms) {
+                            if (!$host_found) {
+                                push @report, "$xhost\n";
+                                $host_found = 1;
+                            }
+                            push @report, sprintf("  %4s %s\n", $vhost, $id);
+                        }
+                    }
                 }
             }
         }
     }
 
+    msg("\n");
     if (@report) {
+        msg("\n");
         for my $z (@report) {
             msg($z);
         }
@@ -749,9 +761,12 @@ sub find_any_vm {
 
     my $cnt = 1;
     my @report;
+    msg('Searching ' . scalar(@{ $CONF->xen_server }) . ' hosts: ');
     for my $xhost (@{ $CONF->xen_server }) {
+        my $host_found = 0;
         print("$cnt ");
         $cnt++;
+
         my @cl = ();
         push @cl, 'xen', 'list';
         if ($opt_debug) {
@@ -790,18 +805,27 @@ sub find_any_vm {
             }
         } while ($output->type eq 'output');
         if ($output_data) {
-            push @report, "$xhost\n";
             my @host_list = split "\n", $output_data;
             for my $l (@host_list) {
                 if ($l =~ /^Name:\s+(\S+)/xms) {
                     my $this_name = $1;
-                    push @report, "    $this_name\n";
+                    for my $r (@regex_list) {
+                        if ($this_name =~ /$r/xms) {
+                            if (!$host_found) {
+                                push @report, "$xhost\n";
+                                $host_found = 1;
+                            }
+                            push @report, "    $this_name\n";
+                        }
+                    }
                 }
             }
         }
     }
 
+    msg("\n");
     if (@report) {
+        msg("\n");
         for my $z (@report) {
             msg($z);
         }

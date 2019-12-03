@@ -1,4 +1,4 @@
-cz-xen-utils (42) UNRELEASED; urgency=medium
+cz-xen-utils (42) unstable; urgency=medium
 
   * Add the 'info' command to display information about dom0.
   * Add a timeout to the find command so that it is not disabled

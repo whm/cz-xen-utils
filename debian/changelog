@@ -1,3 +1,13 @@
+cz-xen-utils (42) UNRELEASED; urgency=medium
+
+  * Add the 'info' command to display information about dom0.
+  * Add a timeout to the find command so that it is not disabled
+    by a misbehaving dom0.
+  * Reformat the output from the find command to better fit on an
+    80 column window.
+
+ -- Bill MacAllister <whm@dropbox.com>  Tue, 03 Dec 2019 00:42:27 +0000
+
 cz-xen-utils (41) unstable; urgency=medium
 
   * Allow timeouts for various operations to be specified in the

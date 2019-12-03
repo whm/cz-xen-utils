@@ -675,65 +675,69 @@ sub find_vm {
 sub find_running {
     my @regex_list = @_;
 
-    my %host_mem  = ();
-    my $max_xhost = 16;
-    my $max_vhost = 32;
-    for my $xhost (@{ $CONF->xen_server }) {
-        if (length($xhost) > $max_xhost) {
-            $max_xhost = length($xhost);
-        }
+    my $cnt = 1;
+    my @report;
+    for my $xhost (sort(@{ $CONF->xen_server })) {
+        print("$cnt ");
+        $cnt++;
         my @cl = ();
         push @cl, 'xen', 'show';
         if ($opt_debug) {
             dbg('Executing: remctl ' . $xhost . ' ' . join(' ', @cl));
         }
-        my $stat = remctl($xhost, undef, undef, @cl);
-        if ($stat->error) {
-            msg('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
-            msg('ERROR: ' . $stat->error . "\n");
+        my $remctl = Net::Remctl->new;
+        $remctl->set_timeout(30);
+        if (!$remctl->open($xhost)) {
+            msg("\nERROR: cannot connect to $xhost\n");
+            msg("INFO: skipping\n");
             next;
         }
-        my @host_list = split "\n", $stat->stdout;
-        for my $h (@host_list) {
-            if ($h =~ m/^(\S+)\s+(\d+)\s+(\d+)/xms) {
-                my $vhost = $1;
-                my $id    = $2;
-                my $mem   = $3;
-                if (scalar @regex_list) {
-                    for my $regex (@regex_list) {
-                        if ($vhost =~ m/$regex/xms) {
-                            $host_mem{$vhost}{$xhost} = $mem;
-                            if (length($vhost) > $max_vhost) {
-                                $max_vhost = length($vhost);
-                            }
-                        }
-                    }
-                } else {
-                    $host_mem{$vhost}{$xhost} = $mem;
+        if (!$remctl->command(@cl)) {
+            msg("\nERROR: cannot send command: " . $remctl->error . "\n");
+            msg("INFO: skipping\n");
+            next;
+        }
+        my $output;
+        my $output_data;
+        do {
+            $output = $remctl->output;
+            if ($output->type eq 'output') {
+                if ($output->stream == 1) {
+                    $output_data .= $output->data;
+                } elsif ($output->stream == 2) {
+                    msg("\nERROR: " . $output->data . "\n");
+                }
+            } elsif ($output->type eq 'error') {
+                msg("\nERROR:" . $output->error . "\n");
+            } elsif ($output->type eq 'status') {
+                if ($opt_debug) {
+                    dbg('output status:' . $output->status);
+                }
+            } else {
+                die "Unknown output token from library: ", $output->type, "\n";
+            }
+        } while ($output->type eq 'output');
+        if ($output_data) {
+            push @report, "$xhost\n";
+            my @host_list = split "\n", $output_data;
+            for my $h (@host_list) {
+                if ($h =~ m/^(\S+)\s+(\d+)\s+(\d+)/xms) {
+                    my $vhost = $1;
+                    my $id    = $2;
+                    my $mem   = $3;
+                    push @report, sprintf("  %4s %s\n", $vhost, $id);
                 }
             }
         }
     }
 
-    if (keys %host_mem) {
-        my $head
-          = "%-${max_vhost}.${max_vhost}s "
-          . "%-${max_xhost}.${max_xhost}s "
-          . "%8.8s\n";
-        my $fmt
-          = "%-${max_vhost}.${max_vhost}s "
-          . "%-${max_xhost}.${max_xhost}s " . "%8d\n";
-        msg(sprintf $head, 'Virtual Host',   'Xen Server',     'Memory');
-        msg(sprintf $head, '-' x $max_vhost, '-' x $max_xhost, '-' x 8);
-        for my $h (sort keys %host_mem) {
-            for my $x (sort keys %{ $host_mem{$h} }) {
-                msg(sprintf $fmt, $h, $x, $host_mem{$h}{$x});
-            }
+    if (@report) {
+        for my $z (@report) {
+            msg($z);
         }
     } else {
-        msg("WARN: not matching hosts found\n");
+        msg("INFO: No matching hosts found\n");
     }
-
     return;
 }
 
@@ -743,77 +747,67 @@ sub find_running {
 sub find_any_vm {
     my @regex_list = @_;
 
-    my %host_data = ();
-    my $max_xhost = 16;
-    my $max_vhost = 32;
+    my $cnt = 1;
+    my @report;
     for my $xhost (@{ $CONF->xen_server }) {
-        if (length($xhost) > $max_xhost) {
-            $max_xhost = length($xhost);
-        }
-        my $this_name = '';
-        my @cl        = ();
+        print("$cnt ");
+        $cnt++;
+        my @cl = ();
         push @cl, 'xen', 'list';
         if ($opt_debug) {
             dbg('Executing: remctl ' . $xhost . ' ' . join(' ', @cl));
         }
-        my $stat = remctl($xhost, undef, undef, @cl);
-        if ($stat->error) {
-            msg('INFO: remctl ' . $xhost . ' ' . join(' ', @cl));
-            msg('ERROR: ' . $stat->error . "\n");
+        my $remctl = Net::Remctl->new;
+        $remctl->set_timeout(30);
+        if (!$remctl->open($xhost)) {
+            msg("\nERROR: cannot connect to $xhost\n");
+            msg("INFO: skipping\n");
             next;
         }
-        my @lines = split "\n", $stat->stdout;
-        for my $l (@lines) {
-            if ($l =~ /^\s*$/xms) {
-                $this_name = '';
-                next;
-            }
-            if ($l =~ /^Name:\s+(\S+)/xms) {
-                $this_name = $1;
-                if (length($this_name) > $max_vhost) {
-                    $max_vhost = length($this_name);
+        if (!$remctl->command(@cl)) {
+            msg("\nERROR: cannot send command: " . $remctl->error . "\n");
+            msg("INFO: skipping\n");
+            next;
+        }
+        my $output;
+        my $output_data;
+        do {
+            $output = $remctl->output;
+            if ($output->type eq 'output') {
+                if ($output->stream == 1) {
+                    $output_data .= $output->data;
+                } elsif ($output->stream == 2) {
+                    msg("\nERROR: " . $output->data . "\n");
                 }
-                next;
+            } elsif ($output->type eq 'error') {
+                msg("\nERROR: " . $output->error . "\n");
+            } elsif ($output->type eq 'status') {
+                if ($opt_debug) {
+                    dbg('output status:' . $output->status);
+                }
+            } else {
+                die "Unknown output token from library: ", $output->type, "\n";
             }
-            my ($attr, $value) = split(/:/, $l, 2);
-            if ($this_name && $attr && $value) {
-                $host_data{$this_name}{$xhost}{$attr} = $value;
-                next;
+        } while ($output->type eq 'output');
+        if ($output_data) {
+            push @report, "$xhost\n";
+            my @host_list = split "\n", $output_data;
+            for my $l (@host_list) {
+                if ($l =~ /^Name:\s+(\S+)/xms) {
+                    my $this_name = $1;
+                    push @report, "    $this_name\n";
+                }
             }
         }
     }
 
-    if (keys %host_data) {
-        my $head
-          = "%-${max_vhost}.${max_vhost}s "
-          . "%-${max_xhost}.${max_xhost}s "
-          . "%8.8s\n";
-        my $fmt
-          = "%-${max_vhost}.${max_vhost}s "
-          . "%-${max_xhost}.${max_xhost}s " . "%8d\n";
-        msg(sprintf $head, 'Virtual Host', 'Xen Server', 'Memory');
-        msg(sprintf($head, '-' x $max_vhost, '-' x $max_xhost, '-' x 8));
-        for my $h (sort keys %host_data) {
-            for my $x (sort keys %{ $host_data{$h} }) {
-                my $foundit = 0;
-                if (scalar @regex_list) {
-                    for my $regex (@regex_list) {
-                        if ($h =~ m/$regex/xms) {
-                            $foundit = 1;
-                            last;
-                        }
-                    }
-                }
-                if (!$foundit) {
-                    next;
-                }
-                msg(sprintf($fmt, $h, $x, $host_data{$h}{$x}{'Memory'}));
-            }
+    if (@report) {
+        for my $z (@report) {
+            msg($z);
         }
     } else {
-        msg("WARN: not matching hosts found\n");
+        msg("INFO: No matching hosts found\n");
     }
-
     return;
 }
 
@@ -883,6 +877,21 @@ sub list_freemem {
         if ($l =~ /memory/) {
             msg("$l\n");
         }
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# List dom0 information
+
+sub list_info {
+
+    my @cmd         = ('/usr/sbin/xl', 'info');
+    my $cmd_timeout = 60 * $CONF->timeout_list();
+    my $out         = run_cmd($cmd_timeout, @cmd);
+    my @out_lines   = split /\n/, $out;
+    for my $z (@out_lines) {
+        msg("$z\n");
     }
     return;
 }
@@ -1300,6 +1309,7 @@ elsif ($action eq 'example')   { example_conf(); }
 elsif ($action eq 'find')      { find_vm(@ARGV); }
 elsif ($action eq 'freedisk')  { list_freedisk_space(); }
 elsif ($action eq 'freemem')   { list_freemem(); }
+elsif ($action eq 'info')      { list_info(); }
 elsif ($action eq 'list')      { list_vms($vhost); }
 elsif ($action eq 'listdisks') { list_vm_disks($vhost); }
 elsif ($action eq 'listdists') { list_dists(); }

@@ -1,15 +1,18 @@
 #!/usr/bin/perl
 #
 # Copyright 2012 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2018 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2019 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Small script to get a better xen console using minicom
+#
+# This script is obsolete
 
 use Getopt::Long;
 use Pod::Usage;
 use strict;
 
 my $opt_domain = 'ca-zephyr.org';
+my $opt_force;
 my $opt_help;
 my $opt_manual;
 my $opt_toolset = '/usr/sbin/xm';
@@ -50,6 +53,7 @@ sub find_toolset {
 GetOptions(
     'domain=s'  => \$opt_domain,
     'help'      => \$opt_help,
+    'force'     => \$opt_force,
     'manual'    => \$opt_manual,
     'toolset=s' => \$opt_toolset
 );
@@ -62,6 +66,11 @@ pod2usage(-verbose => 0) if $opt_help;
 pod2usage(-verbose => 2) if $opt_manual;
 pod2usage(-verbose => 0) if !$ARGV[0] || $ARGV[0] eq 'help';
 pod2usage(-verbose => 2) if $ARGV[0] eq 'manual';
+
+print("INFO: This script is obsolete.  Use 'xl console' instead.\n");
+if (!$opt_force) {
+    exit 1;
+}
 
 my $vm = $ARGV[0];
 if ($vm !~ /[.]/xms) {
@@ -117,13 +126,16 @@ __END__
 
 =head1 NAME
 
-cz-console
+cz-console - a terminal wrapper for access to domu consoles.
 
 =head1 SYNOPSIS
 
-     cz-console <hostname>|help|manual --toolset=<path> --domain=<domain-name>
+cz-console <hostname>|help|manual --force --toolset=<path>
+--domain=<domain-name>
 
 =head1 DESCRIPTION
+
+INFO: This script is obsolete.  Use 'xl console' instead.
 
 Connect to the console of a Xen virtual machine.  The toolset is used
 to determine how to connect to the console.  If the old xm toolset is
@@ -133,6 +145,10 @@ installed then 'xl console' is used.
 =head1 OPTIONS
 
 =over 4
+
+=item --force
+
+Use the terminal wrapper instead of exiting.
 
 =item --toolset=path
 
@@ -151,7 +167,7 @@ default is .ca-zephyr.org.
 
 Connect to host zoot-vm1
 
-    cz-console zoot-vm1
+    cz-console --force zoot-vm1
 
 =head1 AUTHOR
 

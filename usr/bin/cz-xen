@@ -1295,7 +1295,7 @@ GetOptions(
     'force'      => \$opt_force,
     'help'       => \$opt_help,
     'ip=s'       => \$opt_ip,
-    '!key'       => \$opt_key,
+    'key!'       => \$opt_key,
     'manual'     => \$opt_manual,
     'memory=s'   => \$opt_memory,
     'method=s'   => \$opt_method,

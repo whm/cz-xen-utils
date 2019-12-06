@@ -28,6 +28,7 @@ my $opt_dist;
 my $opt_force;
 my $opt_help;
 my $opt_ip = 'dhcp';
+my $opt_key;
 my $opt_manual;
 my $opt_memory = '4Gb';
 my $opt_method;
@@ -175,6 +176,13 @@ sub read_conf {
     );
     $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
+        'keytab_directory',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen-tools/keytabs'
+        }
+    );
+    $CONF->define(
         'krb_keytab',
         {
             ARGCOUNT => ARGCOUNT_ONE,
@@ -286,6 +294,9 @@ sub example_conf {
     msg("timeout_list = 2\n");
     msg("timeout_mount = 2\n");
     msg("timeout_new = 30\n");
+    msg("#\n");
+    msg("# Directory that hosts keytabs for virtual machines.\n");
+    mdg("keytab_directory = /etc/xen-tools/keytabs\n");
     msg("#\n");
     msg("# ----------------------------------------------------\n");
     msg("# OBSOLETE Configuration elements\n");
@@ -549,6 +560,11 @@ sub create_vm {
     # set the default method
     if (!$opt_method && $opt_dist =~ /^(?: fedora | centos )/xms) {
         $opt_method = 'rinse';
+    }
+
+    # Get the keytab for the host if requested
+    if ($opt_key) {
+        get_keytab($vhost);
     }
 
     # generate the vm
@@ -832,6 +848,37 @@ sub find_any_vm {
     } else {
         msg("INFO: No matching hosts found\n");
     }
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Download the host keytab
+
+sub get_keytab {
+    my ($vhost) = @_;
+
+    if (!$vhost) {
+        die "ERROR: name of virtual host missing\n";
+    }
+
+    if ($opt_debug) {
+        dbg('Using principal: ' . $CONF->krb_principal);
+        dbg('Keytab file ' . $CONF->krb_keytab);
+    }
+    create_ticket_cache($CONF);
+
+    my @cl          = ();
+    my $principal   = "host/$vhost";
+    my $keytab_file = $CONF->keytab_directory . '/' . $vhost . '.keytab';
+
+    my @cl = ('wallet', 'get', '-f', $keytab_file, 'keytab', $principal);
+    if ($opt_debug) {
+        dbg('Executing: ' . join(' ', @cl));
+    }
+    run_cmd(60, @cl);
+
+    destroy_ticket_cache($CONF);
+
     return;
 }
 
@@ -1248,6 +1295,7 @@ GetOptions(
     'force'      => \$opt_force,
     'help'       => \$opt_help,
     'ip=s'       => \$opt_ip,
+    '!key'       => \$opt_key,
     'manual'     => \$opt_manual,
     'memory=s'   => \$opt_memory,
     'method=s'   => \$opt_method,
@@ -1334,6 +1382,7 @@ elsif ($action eq 'find')      { find_vm(@ARGV); }
 elsif ($action eq 'freedisk')  { list_freedisk_space(); }
 elsif ($action eq 'freemem')   { list_freemem(); }
 elsif ($action eq 'info')      { list_info(); }
+elsif ($action eq 'key')       { get_keytab($vhost); }
 elsif ($action eq 'list')      { list_vms($vhost); }
 elsif ($action eq 'listdisks') { list_vm_disks($vhost); }
 elsif ($action eq 'listdists') { list_dists(); }
@@ -1374,6 +1423,7 @@ cz-xen
      cz-xen listdists
      cz-xen listdisks <vm-name>
      cz-xen listroles
+     cz-xen key <vm-name>
      cz-xen manual
      cz-xen mount <vm-name> [<mount-options>]
      cz-xen new <vm-name>
@@ -1444,6 +1494,12 @@ complete.  Essentially crashes the vm.
 =item list
 
 List current defined virtual machines.
+
+=item key <vm-name>
+
+Download the Kerberos keytab for the host using wallet.  The keytab
+must exist and will be downloaded into
+/etc/xen-tools/keytabs/<vm-name>.keytab.
 
 =item listdists
 

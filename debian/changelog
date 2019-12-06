@@ -1,3 +1,10 @@
+cz-xen-utils (43) unstable; urgency=medium
+
+  * Add the 'key' command to the cz-xen script that downloads the
+    VM's keytab from a wallet server.
+
+ -- Bill MacAllister <whm@dropbox.com>  Fri, 06 Dec 2019 01:18:56 +0000
+
 cz-xen-utils (42) unstable; urgency=medium
 
   * Add the 'info' command to display information about dom0.

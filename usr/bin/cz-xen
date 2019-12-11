@@ -13,6 +13,7 @@ use Getopt::Long;
 use IPC::Run qw( run timeout );
 use Net::DNS;
 use Net::Domain qw( hostfqdn );
+use Net::Netmask;
 use Net::Remctl;
 use Pod::Usage;
 use CZ::Xentools;
@@ -26,10 +27,12 @@ my $opt_disk   = '40Gb';
 my $opt_diskid = '-disk';
 my $opt_dist;
 my $opt_force;
+my $opt_gateway;
 my $opt_help;
 my $opt_ip = 'dhcp';
 my $opt_key;
 my $opt_manual;
+my $opt_mask;
 my $opt_memory = '4Gb';
 my $opt_method;
 my $opt_moptions;
@@ -78,6 +81,15 @@ sub validate_ip {
         }
     }
     return;
+}
+
+# ----------------------------------------------------------------------
+# Take an address/cidr and return the corresponding netmask
+
+sub net_size2mask {
+    my ($ip_cidr) = @_;
+    my $block = Net::Netmask->new($ip_cidr);
+    return $block->mask();
 }
 
 # ----------------------------------------------------------------------
@@ -164,7 +176,7 @@ sub read_conf {
         'default_dist',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'stretch'
+            DEFAULT  => 'bionic'
         }
     );
     $CONF->define(
@@ -274,7 +286,7 @@ sub example_conf {
     msg("command_path = /bin:/sbin:/usr/bin:/usr/sbin\n");
     msg("#\n");
     msg("# Default distribution\n");
-    msg("default_dist = stretch\n");
+    msg("default_dist = bionic\n");
     msg("#\n");
     msg("# Kerberos credentials used for requesting services of other\n");
     msg("# other xen servers.\n");
@@ -296,21 +308,8 @@ sub example_conf {
     msg("timeout_new = 30\n");
     msg("#\n");
     msg("# Directory that hosts keytabs for virtual machines.\n");
-    mdg("keytab_directory = /etc/xen-tools/keytabs\n");
+    msg("keytab_directory = /etc/xen-tools/keytabs\n");
     msg("#\n");
-    msg("# ----------------------------------------------------\n");
-    msg("# OBSOLETE Configuration elements\n");
-    msg("# ----------------------------------------------------\n");
-    msg("#\n");
-    msg("Directories to create when creating a VM.  Specify\n");
-    msg("multiple by specifying dir multiple times.\n");
-    msg("dir = /etc/puppet\n");
-    msg("#\n");
-    msg("# Files to copy when creating a VM.\n");
-    msg(    'copy = /etc/xen/cz-setup.d/sources/sources.list   '
-          . "/etc/apt/sources.list\n");
-    msg(    'copy = /etc/xen/cz-setup.d/sources/backports.list '
-          . "/etc/apt/sources.list.d/backports.list\n");
 
     return;
 }
@@ -577,6 +576,12 @@ sub create_vm {
         push @cmd, "--dhcp";
     } else {
         push @cmd, "--ip=${vip}";
+        if ($opt_gateway) {
+            push @cmd, "--gateway=$opt_gateway";
+        }
+        if ($opt_mask) {
+            push @cmd, "--mask=$opt_mask";
+        }
     }
     if ($opt_cpu) {
         push @cmd, "--vcpus=$opt_cpu";
@@ -1293,10 +1298,12 @@ GetOptions(
     'diskid=s'   => \$opt_diskid,
     'dist=s'     => \$opt_dist,
     'force'      => \$opt_force,
+    'gateway=s'  => \$opt_gateway,
     'help'       => \$opt_help,
     'ip=s'       => \$opt_ip,
     'key!'       => \$opt_key,
     'manual'     => \$opt_manual,
+    'mask=s'     => \$opt_mask,
     'memory=s'   => \$opt_memory,
     'method=s'   => \$opt_method,
     'moptions=s' => \$opt_moptions,
@@ -1338,6 +1345,23 @@ if (!$opt_role && $action eq 'new') {
     } else {
         msg("INFO: $role_file is not present.\n");
     }
+}
+
+# Defaults for networking setup if static address
+if ($opt_ip) {
+    if ($opt_gateway) {
+        validate_ip($opt_gateway);
+    }
+    if ($opt_ip =~ /([\d\.]+)\/(\d)+/xms) {
+        my $ip   = $1;
+        my $cidr = $2;
+        $opt_ip   = $ip;
+        $opt_mask = net_size2mask("$ip/$cidr");
+    }
+    if ($opt_mask) {
+        validate_ip($opt_mask);
+    }
+    validate_ip($opt_ip);
 }
 
 my $vhost;
@@ -1552,16 +1576,14 @@ The host name of the vm.  Can be fully qualified name.  If not
 a fully qualified name then the domain from the configuration
 file set used.
 
-=item --ip=<address list>
+=item --ip=<address>[/<cidr]
 
-The IP address or addresses of the virtual host to be created.
-Multiple IP addresses are specified as a comma separated list.  In
-addition to being an IP addres the address can either 'dhcp' or 'dns'.
-If 'dhcp' is specified then the guest will be configured to use DHCP.
-If 'dns' is specified then the guest will be configured to use a
-static address that is retrieved from the DNS.  The IP address is
-required to be an valid IP address only if a DNS lookup for the new
-hostname fails.
+The IP address of the virtual host to be created.  In addition to
+being an IP addres the address can either 'dhcp' or 'dns'.  If 'dhcp'
+is specified then the guest will be configured to use DHCP.  If 'dns'
+is specified then the guest will be configured to use a static address
+that is retrieved from the DNS.  The IP address is required to be an
+valid IP address only if a DNS lookup for the new hostname fails.
 
 =item --arch=i386|amd64
 
@@ -1591,6 +1613,12 @@ Create a virtual machine with dist-name operation system.
 
 The diskid of the disk to mount.  Defaults to "-disk".
 
+=item --gateway=<ip address>
+
+For VMs with a static address the IP address of the network gateway.
+If not specified then the value from the /etc/xen-tools/xen-tools.conf
+file is used.
+
 =item --password=<passphrase>
 
 Set the password for the root user of a new virtual machine.  Defaults
@@ -1605,6 +1633,12 @@ everything else.
 =item --moptions=<mount-options>
 
 Options passed to the mount command when mounting a VMs disk.
+
+=item --netmask=<n.n.n.n>
+
+The netmask for VMs with statically assigned IP addresses.  If not
+specified then the value from the /etc/xen-tools/xen-tools.conf file
+is used.
 
 =item --noudev
 
@@ -1663,15 +1697,11 @@ The complete documentation.
 
 =back
 
-=head1 EXAMPLES
+=head1 EXAMPLE
 
-Create a Debian virtual machine:
+Create a Ubuntu bionic virtual machine:
 
-    cz-xen new somehost --disk=10Gb --memory=500Mb
-
-Create a Ubuntu natty virtual machine:
-
-    cz-xen new somehost --disk=10Gb --memory=500Mb --dist=stretch
+    cz-xen new somehost --disk=10Gb --memory=500Mb --dist=bionic
 
 
 =head1 AUTHOR

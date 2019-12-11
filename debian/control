@@ -3,7 +3,7 @@ Section: admin
 Priority: optional
 Maintainer: Bill MacAlliser <bill@ca-zephyr.org>
 Build-Depends: debhelper (>= 9), perl, perltidy, libappconfig-perl,
- libipc-run-perl, libnet-dns-perl, libnet-remctl-perl,
+ libipc-run-perl, libnet-dns-perl, libnet-netmask-perl, libnet-remctl-perl,
  libauthen-krb5-perl
 Standards-Version: 3.9.4
 
@@ -11,7 +11,7 @@ Package: cz-xen-utils
 Architecture: all
 Depends: ${misc:Depends}, ${perl:Depends}, minicom, rinse,
  libappconfig-perl, libipc-run-perl, libnet-dns-perl,
- libnet-remctl-perl, libauthen-krb5-perl
+ libnet-netmask-perl, libnet-remctl-perl, libauthen-krb5-perl
 Description: Scripts to support Xen Systems
  The package includes scripts that make it simpler to integrate into
  an environment that supports remctl.  Of special significance is the

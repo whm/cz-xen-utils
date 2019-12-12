@@ -193,14 +193,8 @@ sub read_conf {
             DEFAULT  => 'bionic'
         }
     );
-    $CONF->define(
-        'default_domain',
-        {
-            ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'Not used. Preserved to suppress process warnings.'
-        }
-    );
-    $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define('default_domain', { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define('dir',            { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'keytab_directory',
         {
@@ -301,6 +295,10 @@ sub example_conf {
     msg("#\n");
     msg("# Default distribution\n");
     msg("default_dist = bionic\n");
+    msg("#\n");
+    msg("#\n");
+    msg("# Default domain\n");
+    msg("default_domain = ca-zephyr.org\n");
     msg("#\n");
     msg("# Kerberos credentials used for requesting services of other\n");
     msg("# other xen servers.\n");
@@ -1401,6 +1399,16 @@ if ($ARGV[1]) {
             warn("Too many arguments on the command line\n");
             exit(1);
         }
+    }
+}
+
+# Set a default domain if we need to
+if ($vhost && $vhost !~ /[.]/xms) {
+    if ($CONF->default_domain) {
+        $vhost .= $CONF->default_domain;
+    } else {
+        warn("Please specify an FQDN for the vhost\n");
+        exit(1);
     }
 }
 

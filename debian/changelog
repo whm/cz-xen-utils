@@ -2,6 +2,9 @@ cz-xen-utils (44) unstable; urgency=medium
 
   * Fixes to correctly configure VMs with statically assigned IP
     addresses.
+  * Explicitly drop support for creating hosts with multiple IP
+    addresses.  VMs that need to have multiple addresses will need
+    to be configured by hand once the VM is built.
 
  -- Bill MacAllister <whm@dropbox.com>  Wed, 11 Dec 2019 00:22:01 +0000
 

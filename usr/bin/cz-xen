@@ -69,16 +69,30 @@ sub dbg {
 }
 
 # ----------------------------------------------------------------------
-# Validate the ip address that was input.
+# Validate an ip address
 
 sub validate_ip {
+    my ($ip) = @_;
+    my $err = 0;
+    if ($ip !~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/xms) {
+        warn "Invalid IP Address: $ip\n";
+        my $err = 1;
+    }
+    return $err;
+}
+
+# ----------------------------------------------------------------------
+# Validate a list of ip addresses
+
+sub validate_ip_list {
     my ($ip_csv) = @_;
     my @ip_list = split(/,/xms, $ip_csv);
+    my $err_cnt;
     foreach my $ip (@ip_list) {
-        if ($ip !~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/xms) {
-            warn "Invalid IP Address: $ip\n";
-            pod2usage(-verbose => 0);
-        }
+        $err_cnt += validate_ip($ip);
+    }
+    if ($err_cnt > 0) {
+        pod2usage(-verbose => 0);
     }
     return;
 }

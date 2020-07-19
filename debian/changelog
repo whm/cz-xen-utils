@@ -1,3 +1,9 @@
+cz-xen-utils (45) unstable; urgency=medium
+
+  * perltidy clean up in cz-xen and cz-xen-backup.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sun, 19 Jul 2020 16:27:52 +0000
+
 cz-xen-utils (44) unstable; urgency=medium
 
   * Fixes to correctly configure VMs with statically assigned IP

@@ -1420,7 +1420,7 @@ $ENV{PATH} = $CONF->command_path();
 find_toolset();
 
 # Do something
-if ($action eq 'auto') { auto_maint($auto, $auto_host); }
+if    ($action eq 'auto')      { auto_maint($auto, $auto_host); }
 elsif ($action eq 'basefiles') { copy_base_files($vhost); }
 elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
 elsif ($action eq 'delete')    { delete_vm($vhost); }

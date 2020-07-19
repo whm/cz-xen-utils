@@ -259,7 +259,7 @@ sub run_cmd {
     my $in;
     my $out;
     my $err;
-    my $cmd_str = join(q{ }, @cmd);
+    my $cmd_str     = join(q{ }, @cmd);
     my $cmd_timeout = 60 * $timeout_min;
     msg("Executing: $cmd_str\n");
     eval { run(\@cmd, \$in, \$out, \$err, timeout($cmd_timeout)); };
@@ -373,6 +373,7 @@ sub backup_a_snapshot {
     my @cmd = ('tar');
     push @cmd, '--create';
     push @cmd, '--file', $tar_file;
+
     if ($COMP{ $CONF->compression }{'compression'}) {
         push @cmd, '--' . $COMP{ $CONF->compression }{'compression'};
     }
@@ -434,7 +435,7 @@ sub backup_vm {
         next if $opt_confonly;
 
         # shutdown the vm if it is running
-        my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
+        my $stat       = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
         my $vm_restart = 0;
         if ($stat =~ /$vhost/xms) {
             msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'shutdown', $vhost));

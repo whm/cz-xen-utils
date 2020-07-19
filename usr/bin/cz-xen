@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2019 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2020 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Script to manage xen virtual hosts
 
@@ -45,6 +45,7 @@ my $opt_running;
 my $opt_setup    = '/etc/cz-xen-setup.conf';
 my $opt_toolset  = '/usr/sbin/xm';
 my $opt_swapsize = '2Gb';
+my $opt_verbose;
 
 my $CONF;
 my $DEBUG_TIME = time;
@@ -1132,7 +1133,9 @@ sub list_vms {
                 if ($l =~ /^Name:\s+ \S+/xms) {
                     $found = 0;
                 } else {
-                    $msg .= "$l\n";
+                    if (!$opt_verbose) {
+                        $msg .= "$l\n";
+                    }
                     next;
                 }
             }
@@ -1326,7 +1329,8 @@ GetOptions(
     'running'    => \$opt_running,
     'setup=s'    => \$opt_setup,
     'swapsize=s' => \$opt_swapsize,
-    'toolset=s'  => \$opt_toolset
+    'toolset=s'  => \$opt_toolset,
+    'verbose'    => \$opt_verbose
 ) or die("ERROR: invalid command line arguments\n");
 
 # Flush output immediately
@@ -1539,15 +1543,16 @@ megabytes.
 Shutdown a virtual machine without waiting for any process to
 complete.  Essentially crashes the vm.
 
-=item list
-
-List current defined virtual machines.
-
 =item key <vm-name>
 
 Download the Kerberos keytab for the host using wallet.  The keytab
 must exist and will be downloaded into
 /etc/xen-tools/keytabs/<vm-name>.keytab.
+
+=item list
+
+Brief listing of currently defined virtual machines.  A more complete
+listing can be generating by adding the --verbose switch.
 
 =item listdists
 
@@ -1600,6 +1605,14 @@ The host name of the vm.  Can be fully qualified name.  If not
 a fully qualified name then the domain from the configuration
 file set used.
 
+=item --arch=i386|amd64
+
+The architecture of the VM.  Defaults to amd64.
+
+=item --cpu=<number of CPUs>
+
+The number of virtual CPUs.  The default is 2.
+
 =item --ip=<address>[/<cidr]
 
 The IP address of the virtual host to be created.  In addition to
@@ -1609,19 +1622,9 @@ is specified then the guest will be configured to use a static address
 that is retrieved from the DNS.  The IP address is required to be an
 valid IP address only if a DNS lookup for the new hostname fails.
 
-=item --arch=i386|amd64
+=item --debug
 
-The architecture of the VM.  Defaults to amd64.
-
-=item --cpu=<number of CPUs>
-
-The number of virtual CPUs.  The default is 2.
-
-=item --memory=<intUnits>
-
-The size of memory to use for the virtual machine.  The value should
-be an integer followed by the units.  For example: 500Mb is 500
-megabytes.  The default is 500 megabytes.
+Generate debugging messages.
 
 =item --disk=<intUnits>
 
@@ -1637,16 +1640,30 @@ Create a virtual machine with dist-name operation system.
 
 The diskid of the disk to mount.  Defaults to "-disk".
 
+=item --force
+
+Force destroy when a Xen guest.  This is required when the guest's
+configuration file has been deleted, but the guest is still running.
+
 =item --gateway=<ip address>
 
 For VMs with a static address the IP address of the network gateway.
 If not specified then the value from the /etc/xen-tools/xen-tools.conf
 file is used.
 
-=item --password=<passphrase>
+=item --help
 
-Set the password for the root user of a new virtual machine.  Defaults
-to vmPassWord.
+A short help message.
+
+=item --manual
+
+The complete documentation.
+
+=item --memory=<intUnits>
+
+The size of memory to use for the virtual machine.  The value should
+be an integer followed by the units.  For example: 500Mb is 500
+megabytes.  The default is 500 megabytes.
 
 =item --method=<install-method>
 
@@ -1672,16 +1689,15 @@ Do not include the udev role in the list of roles.
 
 Generate a VM without a swap partition.
 
+=item --password=<passphrase>
+
+Set the password for the root user of a new virtual machine.  Defaults
+to vmPassWord.
+
 =item --pv
 
 Generate a Paravirtualized guest.  The default is to build a
 PV guest.
-
-=item --setup=<setup file>
-
-The setup file used to define a "xen cluster".  It allows for the
-execution of a selected set of commands to be run on multiple nodes in
-the cluster.
 
 =item --role=<comma separated list>
 
@@ -1693,6 +1709,12 @@ default is udev,cz-<distname>.
 When used with the find command restricts search to running xen
 guests.
 
+=item --setup=<setup file>
+
+The setup file used to define a "xen cluster".  It allows for the
+execution of a selected set of commands to be run on multiple nodes in
+the cluster.
+
 =item --swapsize=<size of swapfile>
 
 The size of the swap file.
@@ -1702,22 +1724,10 @@ The size of the swap file.
 The tool set to use.  The default is either the setting in the
 TOOLSTACK setting in the /etc/default/xen file or 'xm'.
 
-=item --force
+=item --verbose
 
-Force destroy when a Xen guest.  This is required when the guest's
-configuration file has been deleted, but the guest is still running.
-
-=item --debug
-
-Generate debugging messages.
-
-=item --help
-
-A short help message.
-
-=item --manual
-
-The complete documentation.
+We applicable display additional information.  Currently only affects
+the output of the list command.
 
 =back
 
@@ -1726,7 +1736,6 @@ The complete documentation.
 Create a Ubuntu bionic virtual machine:
 
     cz-xen new somehost --disk=10Gb --memory=500Mb --dist=bionic
-
 
 =head1 AUTHOR
 
@@ -1738,6 +1747,6 @@ This software was developed for use at Stanford University 2012-2014.
 All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2019.  All rights reserved.
+2015-2020.  All rights reserved.
 
 =cut

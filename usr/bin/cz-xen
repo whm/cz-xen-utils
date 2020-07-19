@@ -616,7 +616,7 @@ sub create_vm {
     }
     msg("Be patient this takes time ...\n");
     my $create_timeout = 60 * $CONF->timeout_new();
-    my $out = run_cmd($create_timeout, @cmd);
+    my $out            = run_cmd($create_timeout, @cmd);
 
     msg($out);
 
@@ -651,8 +651,8 @@ sub delete_vm {
     my $cmd_timeout = 60 * $CONF->timeout_delete();
 
     # destroy it first if it is running
-    my @cmd = ($opt_toolset, 'list');
-    my $out = run_cmd($cmd_timeout, @cmd);
+    my @cmd   = ($opt_toolset, 'list');
+    my $out   = run_cmd($cmd_timeout, @cmd);
     my @lines = split /\n/, $out;
     for my $s (@lines) {
         if ($s =~ /^$vhost\s/xms) {
@@ -1122,7 +1122,7 @@ sub list_vms {
     my ($vm)        = @_;
     my @cmd         = ('/usr/bin/xen-list-images');
     my $cmd_timeout = 60 * $CONF->timeout_list();
-    my $out = run_cmd($cmd_timeout, @cmd);
+    my $out         = run_cmd($cmd_timeout, @cmd);
     if ($vm) {
         my @lines = split '\n', $out;
         my $msg;
@@ -1207,7 +1207,7 @@ sub mount_vm_disk {
         push @cmd, '-o', $opt_moptions;
     }
     my $cmd_timeout = 60 * $CONF->timeout_mount();
-    my $out = run_cmd($cmd_timeout, @cmd);
+    my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
 
     return $vm_mount_point;

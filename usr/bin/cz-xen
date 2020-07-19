@@ -1120,34 +1120,18 @@ sub list_vm_disks {
 # List virtual machines
 
 sub list_vms {
-    my ($vm)        = @_;
     my @cmd         = ('/usr/bin/xen-list-images');
     my $cmd_timeout = 60 * $CONF->timeout_list();
     my $out         = run_cmd($cmd_timeout, @cmd);
-    if ($vm) {
+    if ($opt_verbose) {
+        msg($out);
+    } else {
         my @lines = split '\n', $out;
-        my $msg;
-        my $found = 0;
         for my $l (@lines) {
-            if ($found) {
-                if ($l =~ /^Name:\s+ \S+/xms) {
-                    $found = 0;
-                } else {
-                    if (!$opt_verbose) {
-                        $msg .= "$l\n";
-                    }
-                    next;
-                }
-            }
-            if ($l =~ /^Name:\s+ \S+/xms) {
-                $found = 1;
-                $msg .= "$l\n";
-                next;
+            if ($l =~ /^Name:\s+ (.*)/xms) {
+                msg("$l\n");
             }
         }
-        msg($msg);
-    } else {
-        msg($out);
     }
     return;
 }
@@ -1435,7 +1419,7 @@ elsif ($action eq 'freedisk')  { list_freedisk_space(); }
 elsif ($action eq 'freemem')   { list_freemem(); }
 elsif ($action eq 'info')      { list_info(); }
 elsif ($action eq 'key')       { get_keytab($vhost); }
-elsif ($action eq 'list')      { list_vms($vhost); }
+elsif ($action eq 'list')      { list_vms(); }
 elsif ($action eq 'listdisks') { list_vm_disks($vhost); }
 elsif ($action eq 'listdists') { list_dists(); }
 elsif ($action eq 'listroles') { list_roles(); }

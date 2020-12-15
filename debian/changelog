@@ -1,9 +1,9 @@
 cz-xen-utils (47~focal1) unstable; urgency=medium
 
-  * Build for focal with perltidy changes dictated by Ubuntu's
-    version of perltidy.
+  * Build for focal without the perltidy tests to avoid Ubuntu's
+    obsolete version of perltidy.
 
- -- Bill MacAllister <whm@dropbox.com>  Tue, 15 Dec 2020 22:28:42 +0000
+ -- Bill MacAllister <whm@dropbox.com>  Tue, 15 Dec 2020 23:06:29 +0000
 
 cz-xen-utils (47) unstable; urgency=medium
 

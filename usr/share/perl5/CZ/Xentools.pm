@@ -1,6 +1,6 @@
 # ------------------------------------------------------------------------
 # Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2019 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2020 Bill MacAllister <bill@ca-zephyr.org>
 #
 # This module is used by Xen support routines
 
@@ -179,6 +179,6 @@ This software was originally developed for use at Stanford University
 2012-2014.  All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2019.  All rights reserved.
+2015-2020.  All rights reserved.
 
 =cut

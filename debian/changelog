@@ -1,3 +1,9 @@
+cz-xen-utils (49) unstable; urgency=medium
+
+  * Add reboot sleep configuration option to cz-xen-backup script.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Fri, 08 Jan 2021 19:16:53 +0000
+
 cz-xen-utils (48) unstable; urgency=medium
 
   * Rename the --pv switch to --pygrub and change the default to false.

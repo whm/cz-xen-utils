@@ -160,6 +160,13 @@ sub read_conf {
         }
     );
     $CONF->define(
+        'reboot_sleep',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 10
+        }
+    );
+    $CONF->define(
         'snapshot_size',
         {
             ARGCOUNT => ARGCOUNT_ONE,
@@ -241,6 +248,10 @@ sub display_example_conf {
     msg("#\n");
     msg("# Maximum size of snapshot file.\n");
     msg("snapshot_size = 32G\n");
+
+    msg("#\n");
+    msg("# Seconds to sleep after backup before rebooting old system.\n");
+    msg("snapshot_size = 10\n");
 
     return;
 }
@@ -453,7 +464,7 @@ sub backup_vm {
         # Reboot the machine once the snapshot has been created
         if ($opt_bootold) {
             # reboot the system
-            sleep 5;
+            sleep $CONF->reboot_sleep;
             msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'boot', $vhost));
         }
 
@@ -977,7 +988,7 @@ Display usage.
 
 Display this documentation.
 
-=item manual
+=item example
 
 Display an example configuration file.
 

@@ -39,7 +39,7 @@ my $opt_moptions;
 my $opt_noudev;
 my $opt_noswap;
 my $opt_password = 'vmPassWord';
-my $opt_pv       = 1;
+my $opt_pygrub;
 my $opt_role;
 my $opt_running;
 my $opt_setup    = '/etc/cz-xen-setup.conf';
@@ -599,7 +599,7 @@ sub create_vm {
     if ($opt_cpu) {
         push @cmd, "--vcpus=$opt_cpu";
     }
-    if ($opt_pv) {
+    if ($opt_pygrub) {
         push @cmd, '--pygrub';
     }
     if ($opt_noswap) {
@@ -1308,7 +1308,7 @@ GetOptions(
     'moptions=s' => \$opt_moptions,
     'noswap'     => \$opt_noswap,
     'password=s' => \$opt_password,
-    'pv'         => \$opt_pv,
+    'pygrub'     => \$opt_pygrub,
     'role=s'     => \$opt_role,
     'running'    => \$opt_running,
     'setup=s'    => \$opt_setup,
@@ -1678,10 +1678,10 @@ Generate a VM without a swap partition.
 Set the password for the root user of a new virtual machine.  Defaults
 to vmPassWord.
 
-=item --pv
+=item --pygrub
 
-Generate a Paravirtualized guest.  The default is to build a
-PV guest.
+Generate a Xen configuration file that uses pygrub to boot the new
+virtual machine.
 
 =item --role=<comma separated list>
 

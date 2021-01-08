@@ -486,19 +486,19 @@ sub backup_vm {
         my $cnt        = 0;
         while ($cnt < $CONF->shutdown_count) {
             $cnt++;
-            my $s = $cnt . '/' . $CONF->shutdown_count . ' ';
-            msg($s);
+            my $s    = $cnt . '/' . $CONF->shutdown_count . ' ';
             my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
-            msg($stat);
             if ($stat =~ /$vhost/xms) {
                 $vm_restart = 1;
                 if ($cnt > 1) {
+                    msg("$s shutdown sleep ...\n");
                     sleep $CONF->shutdown_sleep;
                 }
                 msg($s);
                 msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'shutdown', $vhost));
             } else {
                 $shut_okay = 1;
+                $cnt       = $CONF->shutdown_count;
             }
         }
         if (!$shut_okay) {
@@ -520,14 +520,14 @@ sub backup_vm {
             my $cnt = 0;
             while ($cnt < $CONF->reboot_count) {
                 $cnt++;
-                my $s = $cnt . '/' . $CONF->reboot_count . ' ';
-                msg($s);
+                my $s    = $cnt . '/' . $CONF->reboot_count . ' ';
                 my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
                 if ($stat =~ /$vhost/xms) {
                     $cnt         = $CONF->reboot_count;
                     $reboot_okay = 1;
                 } else {
                     if ($cnt > 1) {
+                        msg("$s reboot sleep ...\n");
                         sleep $CONF->reboot_sleep;
                     }
                     msg($s);

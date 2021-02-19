@@ -41,8 +41,8 @@ my $opt_password = 'vmPassWord';
 my $opt_pygrub;
 my $opt_role;
 my $opt_running;
-my $opt_setup    = '/etc/cz-xen-setup.conf';
-my $opt_toolset  = '/usr/sbin/xl';
+my $opt_setup   = '/etc/cz-xen-setup.conf';
+my $opt_toolset = '/usr/sbin/xl';
 my $opt_swapsize;
 my $opt_template;
 my $opt_verbose;
@@ -191,8 +191,8 @@ sub read_conf {
             DEFAULT  => 'bionic'
         }
     );
-    $CONF->define('default_domain',   { ARGCOUNT => ARGCOUNT_ONE });
-    $CONF->define('default_role',     { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define('default_domain', { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define('default_role',   { ARGCOUNT => ARGCOUNT_ONE });
     $CONF->define(
         'default_template',
         {
@@ -200,7 +200,7 @@ sub read_conf {
             DEFAULT  => '/etc/xen-tools/xm.tmpl'
         }
     );
-    $CONF->define('dir',              { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'keytab_directory',
         {
@@ -302,7 +302,6 @@ sub read_conf {
     if ($opt_template) {
         $CONF->default_template($opt_template);
     }
-    
 
     return;
 }
@@ -392,7 +391,7 @@ sub get_install_paths {
 
 sub console {
     my ($vhost) = @_;
-    my $cmd = "$opt_tool console $vhost";
+    my $cmd = "$opt_toolset console $vhost";
     msg("Executing: $cmd\n");
     `$cmd`;
     return;
@@ -468,7 +467,7 @@ sub auto_maint {
         if ($file =~ /[.]cfg$/xms) {
             my $a_host = $file;
             $a_host =~ s/[.]cfg$//xms;
-            $cfg_file{ $CONF->role_dir() . "/${file}"} = $a_host;
+            $cfg_file{ $CONF->role_dir() . "/${file}" } = $a_host;
         }
     }
     closedir($dir);
@@ -1384,7 +1383,7 @@ cz_init_tools(basename($0), $opt_debug);
 
 # Set the default for a role
 if ($action eq 'new') {
-    my $role_file = $CONF->role_dir() . "/$role_default";
+    my $role_file = $CONF->role_dir() . '/' . $CONF->default_role();
     if (!-e $role_file) {
         msg("WARN: $role_file is not present.\n");
     }

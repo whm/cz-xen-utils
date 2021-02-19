@@ -1,3 +1,12 @@
+cz-xen-utils (50) unstable; urgency=medium
+
+  * cz-xen changes:
+    - Ad console action back.
+    - Add configuration properties for the xen-tools roles and
+      templates.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Fri, 19 Feb 2021 08:07:44 +0000
+
 cz-xen-utils (49) unstable; urgency=medium
 
   * Add reboot sleep configuration option to cz-xen-backup script.

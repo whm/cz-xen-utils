@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2020 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2021 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Script to manage xen virtual hosts
 
@@ -37,20 +37,18 @@ my $opt_memory = '4Gb';
 my $opt_method;
 my $opt_moptions;
 my $opt_noudev;
-my $opt_noswap;
 my $opt_password = 'vmPassWord';
 my $opt_pygrub;
 my $opt_role;
 my $opt_running;
 my $opt_setup    = '/etc/cz-xen-setup.conf';
-my $opt_toolset  = '/usr/sbin/xm';
-my $opt_swapsize = '2Gb';
+my $opt_toolset  = '/usr/sbin/xl';
+my $opt_swapsize;
+my $opt_template;
 my $opt_verbose;
 
 my $CONF;
 my $DEBUG_TIME = time;
-my $ROLE_DIR   = '/etc/xen-tools/role.d';
-my $CFG_DIR    = '/etc/xen';
 
 ##############################################################################
 # Subroutines
@@ -186,7 +184,6 @@ sub read_conf {
             DEFAULT  => '/bin:/sbin:/usr/bin:/usr/sbin'
         }
     );
-    $CONF->define('copy', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'default_dist',
         {
@@ -194,8 +191,16 @@ sub read_conf {
             DEFAULT  => 'bionic'
         }
     );
-    $CONF->define('default_domain', { ARGCOUNT => ARGCOUNT_ONE });
-    $CONF->define('dir',            { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define('default_domain',   { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define('default_role',     { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define(
+        'default_template',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen-tools/xm.tmpl'
+        }
+    );
+    $CONF->define('dir',              { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'keytab_directory',
         {
@@ -222,6 +227,13 @@ sub read_conf {
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => 'DOMAIN.TOP'
+        }
+    );
+    $CONF->define(
+        'role_dir',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen-tools/role.d'
         }
     );
     $CONF->define(
@@ -266,6 +278,13 @@ sub read_conf {
             DEFAULT  => '30'
         }
     );
+    $CONF->define(
+        'xen_cfg_dir',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen'
+        }
+    );
     $CONF->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
 
     # Read the configuration file if there is one
@@ -273,10 +292,17 @@ sub read_conf {
         $CONF->file($opt_setup);
     }
 
-    # Set the default distribution
-    if (!$opt_dist) {
-        $opt_dist = $CONF->default_dist;
+    # Command line overrides
+    if ($opt_dist) {
+        $CONF->default_dist($opt_dist);
     }
+    if ($opt_role) {
+        $CONF->default_role($opt_role);
+    }
+    if ($opt_template) {
+        $CONF->default_template($opt_template);
+    }
+    
 
     return;
 }
@@ -297,9 +323,17 @@ sub example_conf {
     msg("# Default distribution\n");
     msg("default_dist = bionic\n");
     msg("#\n");
-    msg("#\n");
     msg("# Default domain\n");
     msg("default_domain = ca-zephyr.org\n");
+    msg("#\n");
+    msg("# Default xen-tools role\n");
+    msg("default_role = cz-focal\n");
+    msg("#\n");
+    msg("# Default xen-tools template for xen cfg generation\n");
+    msg("default_template = /etc/xen-tools/xm.tmpl\n");
+    msg("#\n");
+    msg("# Directory that hosts keytabs for virtual machines.\n");
+    msg("keytab_directory = /etc/xen-tools/keytabs\n");
     msg("#\n");
     msg("# Kerberos credentials used for requesting services of other\n");
     msg("# other xen servers.\n");
@@ -308,10 +342,8 @@ sub example_conf {
     msg("krb_realm = DOMAIN.TOP\n");
     msg("tgt_file = /tmp/cz-xen.tgt\n");
     msg("#\n");
-    msg("# Servers in the xen pool.  This used by the find command.\n");
-    msg("xen_server = server1.domain.top\n");
-    msg("xen_server = server2.domain.top\n");
-    msg("xen_server = server3.domain.top\n");
+    msg("# The xen-tools role directroy\n");
+    msg("role_dir = /etc/xen-tools/role.d\n");
     msg("#\n");
     msg("# The timeout unit of measure is minutes\n");
     msg("timeout_action = 2\n");
@@ -320,8 +352,13 @@ sub example_conf {
     msg("timeout_mount = 2\n");
     msg("timeout_new = 30\n");
     msg("#\n");
-    msg("# Directory that hosts keytabs for virtual machines.\n");
-    msg("keytab_directory = /etc/xen-tools/keytabs\n");
+    msg("# Xen configuration directory\n");
+    msg("xen_cfg_dir = /etc/xen\n");
+    msg("#\n");
+    msg("# Servers in the xen pool.  This used by the find command.\n");
+    msg("xen_server = server1.domain.top\n");
+    msg("xen_server = server2.domain.top\n");
+    msg("xen_server = server3.domain.top\n");
     msg("#\n");
 
     return;
@@ -348,6 +385,17 @@ sub get_install_paths {
         }
     }
     return %paths;
+}
+
+# ----------------------------------------------------------------------
+# Access the console of a domU
+
+sub console {
+    my ($vhost) = @_;
+    my $cmd = "$opt_tool console $vhost";
+    msg("Executing: $cmd\n");
+    `$cmd`;
+    return;
 }
 
 # ----------------------------------------------------------------------
@@ -414,12 +462,13 @@ sub auto_maint {
     my ($action, $this_host) = @_;
 
     my %cfg_file = ();
-    opendir(my $dir, $CFG_DIR) or croak("ERROR: problem opening $CFG_DIR\n");
+    opendir(my $dir, $CONF->xen_cfg_dir())
+      or croak('ERROR: problem opening ' . $CONF->xen_cfg_dir() . "\n");
     while (my $file = readdir($dir)) {
         if ($file =~ /[.]cfg$/xms) {
             my $a_host = $file;
             $a_host =~ s/[.]cfg$//xms;
-            $cfg_file{"${CFG_DIR}/${file}"} = $a_host;
+            $cfg_file{ $CONF->role_dir() . "/${file}"} = $a_host;
         }
     }
     closedir($dir);
@@ -436,7 +485,8 @@ sub auto_maint {
         msg("---------------\n");
         for my $f (sort keys %cfg_file) {
             my $h = $cfg_file{$f};
-            if (-e "$CFG_DIR/auto/${h}.cfg") {
+            my $a = $CONF->xen_cfg_dir() . "/auto/${h}.cfg";
+            if (-e $a) {
                 msg("AUTOBOOT $h\n");
             } else {
                 msg("no autoboot link for $h\n");
@@ -457,7 +507,7 @@ sub auto_maint {
             push @file_list, $f;
         }
     } else {
-        my $this_file = "${CFG_DIR}/${this_host}.cfg";
+        my $this_file = $CONF->xen_cfg_dir() . "/${this_host}.cfg";
         if (!-e $this_file) {
             msg("ERROR: invalid host ($this_host)\n");
             exit 1;
@@ -469,11 +519,12 @@ sub auto_maint {
     # Perform the operation
     for my $f (sort @file_list) {
         my $h              = $cfg_file{$f};
-        my $this_auto_file = "${CFG_DIR}/auto/${h}.cfg";
+        my $this_auto_file = $CONF->xen_cfg_dir() . "/auto/${h}.cfg";
         if ($action eq 'on') {
-            if (!-e "$CFG_DIR/auto") {
-                mkdir "$CFG_DIR/auto", 0755
-                  or croak("ERROR: problem creating $CFG_DIR/auth\n");
+            my $a_dir = $CONF->xen_cfg_dir() . '/auto';
+            if (!-e $a_dir) {
+                mkdir $a_dir, 0755
+                  or croak("ERROR: problem creating $a_dir\n");
             }
             if (-e $this_auto_file) {
                 msg("INFO: $h already set to AUTOBOOT\n");
@@ -536,11 +587,13 @@ sub create_vm {
         pod2usage(-verbose => 0);
     }
     $opt_memory =~ tr/gmB/GMb/;
-    if ($opt_swapsize !~ /^\d+(?: Gb | Mb )/xmsi) {
-        warn "Invalid value for swap size.  Units are Mb or Gb.\n";
-        pod2usage(-verbose => 0);
+    if ($opt_swapsize) {
+        if ($opt_swapsize !~ /^\d+(?: Gb | Mb )/xmsi) {
+            warn "Invalid value for swap size.  Units are Mb or Gb.\n";
+            pod2usage(-verbose => 0);
+        }
+        $opt_swapsize =~ tr/gmB/GMb/;
     }
-    $opt_swapsize =~ tr/gmB/GMb/;
 
     # validate install method
     if ($opt_method && $opt_method !~ /^(?: rinse | debootstrap)$/xms) {
@@ -564,13 +617,13 @@ sub create_vm {
         warn "No OS distributions available\n";
         pod2usage(-verbose => 0);
     }
-    if ($opt_dist && !-e "${dist_dir}/${opt_dist}.d") {
-        warn "Invalid distribution $opt_dist\n";
+    if (!-e "${dist_dir}/" . $CONF->default_dist() . '.d') {
+        warn 'Invalid distribution ' . $CONF->default_dist() . "\n";
         pod2usage(-verbose => 0);
     }
 
     # set the default method
-    if (!$opt_method && $opt_dist =~ /^(?: fedora | centos )/xms) {
+    if (!$opt_method && $CONF->default_dist() =~ /^(?: fedora | centos )/xms) {
         $opt_method = 'rinse';
     }
 
@@ -602,15 +655,13 @@ sub create_vm {
     if ($opt_pygrub) {
         push @cmd, '--pygrub';
     }
-    if ($opt_noswap) {
-        push @cmd, '--noswap';
-    } else {
+    if ($opt_swapsize) {
         push @cmd, "--swap=${opt_swapsize}";
+    } else {
+        push @cmd, '--noswap';
     }
-    if ($opt_role) {
-        push @cmd, "--role=${opt_role}";
-    }
-    push @cmd, "--dist=$opt_dist";
+    push @cmd, '--role=' . $CONF->default_role();
+    push @cmd, '--dist=' . $CONF->default_dist();
     push @cmd, "--arch=$opt_arch";
     if ($opt_method) {
         push @cmd, "--install-method=${opt_method}";
@@ -991,10 +1042,10 @@ sub list_info {
 sub list_roles {
 
     # List files in the /usr/lib/xen-tools/role.d directory
-    msg("Roles in $ROLE_DIR:\n");
+    msg('Roles found in ' . $CONF->role_dir() . "\n");
     my $df;
     my %dir_list = ();
-    opendir($df, $ROLE_DIR);
+    opendir($df, $CONF->role_dir());
     while (my $file = readdir($df)) {
         next if $file eq 'README';
         next if $file =~ /^[.]{1,2}$/xms;
@@ -1039,8 +1090,8 @@ sub show_role {
     my ($role) = @_;
 
     if (!$role || $role eq 'ALL') {
-        opendir(my $dir, $ROLE_DIR)
-          or croak("ERROR: problem opening $ROLE_DIR\n");
+        opendir(my $dir, $CONF->role_dir())
+          or croak('ERROR: problem opening ' . $CONF->role_dir() . "\n");
         while (my $file = readdir($dir)) {
             if ($file !~ /^[.]/xms) {
                 msg("$file\n");
@@ -1050,7 +1101,7 @@ sub show_role {
         return;
     }
 
-    my $role_file = "$ROLE_DIR/$role";
+    my $role_file = $CONF->role_dir() . "/$role";
     if (-e $role_file) {
         my $rf;
         open $rf, '<', $role_file or croak("Cannot open $role_file\n");
@@ -1306,7 +1357,6 @@ GetOptions(
     'memory=s'   => \$opt_memory,
     'method=s'   => \$opt_method,
     'moptions=s' => \$opt_moptions,
-    'noswap'     => \$opt_noswap,
     'password=s' => \$opt_password,
     'pygrub'     => \$opt_pygrub,
     'role=s'     => \$opt_role,
@@ -1333,17 +1383,10 @@ read_conf();
 cz_init_tools(basename($0), $opt_debug);
 
 # Set the default for a role
-my $role_default = "cz-$opt_dist";
-if (!$opt_role && $action eq 'new') {
-    my $role_file = "$ROLE_DIR/$role_default";
-    if (-e $role_file) {
-        if ($opt_noudev) {
-            $opt_role = $role_file;
-        } else {
-            $opt_role = "udev,$role_file";
-        }
-    } else {
-        msg("INFO: $role_file is not present.\n");
+if ($action eq 'new') {
+    my $role_file = $CONF->role_dir() . "/$role_default";
+    if (!-e $role_file) {
+        msg("WARN: $role_file is not present.\n");
     }
 }
 
@@ -1392,7 +1435,7 @@ if ($ARGV[1]) {
 
 # Set a default domain if we need to
 if ($vhost && $vhost !~ /[.]/xms) {
-    if ($CONF->default_domain) {
+    if ($CONF->default_domain()) {
         $vhost .= $CONF->default_domain;
     } else {
         warn("Please specify an FQDN for the vhost\n");
@@ -1411,6 +1454,7 @@ find_toolset();
 if    ($action eq 'auto')      { auto_maint($auto, $auto_host); }
 elsif ($action eq 'basefiles') { copy_base_files($vhost); }
 elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
+elsif ($action eq 'console')   { console($vhost); }
 elsif ($action eq 'delete')    { delete_vm($vhost); }
 elsif ($action eq 'destroy')   { xtool_host_action($vhost, $action); }
 elsif ($action eq 'example')   { example_conf(); }
@@ -1669,10 +1713,6 @@ is used.
 
 Do not include the udev role in the list of roles.
 
-=item --noswap
-
-Generate a VM without a swap partition.
-
 =item --password=<passphrase>
 
 Set the password for the root user of a new virtual machine.  Defaults
@@ -1731,6 +1771,6 @@ This software was developed for use at Stanford University 2012-2014.
 All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2020.  All rights reserved.
+2015-2021.  All rights reserved.
 
 =cut

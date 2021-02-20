@@ -23,7 +23,7 @@ my $opt_arch = 'amd64';
 my $opt_confirm;
 my $opt_cpu = 2;
 my $opt_debug;
-my $opt_disk   = '40Gb';
+my $opt_disk;
 my $opt_diskid = '-disk';
 my $opt_dist;
 my $opt_force;
@@ -33,7 +33,7 @@ my $opt_ip = 'dhcp';
 my $opt_key;
 my $opt_manual;
 my $opt_mask;
-my $opt_memory = '4Gb';
+my $opt_memory;
 my $opt_method;
 my $opt_moptions;
 my $opt_noudev;
@@ -41,8 +41,7 @@ my $opt_password = 'vmPassWord';
 my $opt_pygrub;
 my $opt_role;
 my $opt_running;
-my $opt_setup   = '/etc/cz-xen-setup.conf';
-my $opt_toolset = '/usr/sbin/xl';
+my $opt_setup = '/etc/cz-xen-setup.conf';
 my $opt_swapsize;
 my $opt_template;
 my $opt_verbose;
@@ -184,6 +183,14 @@ sub read_conf {
             DEFAULT  => '/bin:/sbin:/usr/bin:/usr/sbin'
         }
     );
+    $CONF->define('copy_file', { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define(
+        'default_disk',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '40Gb'
+        }
+    );
     $CONF->define(
         'default_dist',
         {
@@ -192,7 +199,14 @@ sub read_conf {
         }
     );
     $CONF->define('default_domain', { ARGCOUNT => ARGCOUNT_ONE });
-    $CONF->define('default_role',   { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define(
+        'default_memory',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '4Gb'
+        }
+    );
+    $CONF->define('default_role', { ARGCOUNT => ARGCOUNT_ONE });
     $CONF->define(
         'default_template',
         {
@@ -279,6 +293,13 @@ sub read_conf {
         }
     );
     $CONF->define(
+        'toolset',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/usr/sbin/xl'
+        }
+    );
+    $CONF->define(
         'xen_cfg_dir',
         {
             ARGCOUNT => ARGCOUNT_ONE,
@@ -293,8 +314,14 @@ sub read_conf {
     }
 
     # Command line overrides
+    if ($opt_disk) {
+        $CONF->default_disk($opt_disk);
+    }
     if ($opt_dist) {
         $CONF->default_dist($opt_dist);
+    }
+    if ($opt_memory) {
+        $CONF->default_memory($opt_memory);
     }
     if ($opt_role) {
         $CONF->default_role($opt_role);
@@ -319,11 +346,22 @@ sub example_conf {
     msg("# Set the PATH\n");
     msg("command_path = /bin:/sbin:/usr/bin:/usr/sbin\n");
     msg("#\n");
+    msg("# Copy files from dom0 to domu.\n");
+    msg("# (The script always checks for a host keytab.)\n");
+    msg("copy_file = /some/dir/file1 to /some/dir/file1\n");
+    msg("copy_file = /other/dir/file2 to /some/dir/file3\n");
+    msg("#\n");
+    msg("# Default disk size\n");
+    msg("default_disk = 40Gb\n");
+    msg("#\n");
     msg("# Default distribution\n");
     msg("default_dist = bionic\n");
     msg("#\n");
     msg("# Default domain\n");
     msg("default_domain = ca-zephyr.org\n");
+    msg("#\n");
+    msg("# Default memory allocation\n");
+    msg("default_memory = 4Gb\n");
     msg("#\n");
     msg("# Default xen-tools role\n");
     msg("default_role = cz-focal\n");
@@ -350,6 +388,10 @@ sub example_conf {
     msg("timeout_list = 2\n");
     msg("timeout_mount = 2\n");
     msg("timeout_new = 30\n");
+    msg("#\n");
+    msg("# Toolset to use to manage domu systems.  This should be\n");
+    msg("# changed only if the location of xl changes\n");
+    msg("toolset = /usr/sbin/xl\n");
     msg("#\n");
     msg("# Xen configuration directory\n");
     msg("xen_cfg_dir = /etc/xen\n");
@@ -391,60 +433,30 @@ sub get_install_paths {
 
 sub console {
     my ($vhost) = @_;
-    my $cmd = "$opt_toolset console $vhost";
-    msg("Executing: $cmd\n");
-    `$cmd`;
+    my @cmd = ($CONF->toolset(), 'console', $vhost);
+    msg(join(' ', @cmd) . "\n");
+    exec @cmd;
     return;
 }
 
 # ----------------------------------------------------------------------
-# Copy a base set of configuration files to the vm
+# Copy files from the dom0 systm to the VM
 
-sub copy_base_files {
-    my ($vhost) = @_;
+sub copy_dom0_files {
+    my ($vhost, $file_list_ref) = @_;
 
-    if ($opt_debug) {
-        dbg('executing copy_base_files');
+    my %file_list      = %{$file_list_ref};
+    my $vm_mount_point = mount_vm_disk($vhost);
+    $vm_mount_point =~ s{/$}{}xms;
+
+    for my $to (sort keys %file_list) {
+        my $from = $vm_mount_point . '/' . $file_list{$to};
+        msg("Copying $from to $to\n");
+        copy($from, $to)
+          or carp("WARN: problem copying $from to $to\n");
     }
-
-    my $dir_ref   = $CONF->dir();
-    my $paths_ref = $CONF->copy();
-    my $vm_mount_point;
-
-    # Create directories as needed
-    if ($CONF && scalar @{$dir_ref}) {
-        for my $dir (@{$dir_ref}) {
-            if (!$vm_mount_point) {
-                $vm_mount_point = mount_vm_disk($vhost);
-            }
-            my $new_dir = $vm_mount_point . $dir;
-            if (!-d $new_dir) {
-                if (-e $new_dir) {
-                    carp("WARN: $new_dir exists but is not a directory\n");
-                } else {
-                    msg("Creating directory $new_dir\n");
-                    mkdir $new_dir
-                      or carp("WARN: problem creating $new_dir\n");
-                }
-            }
-        }
-    }
-
-    # Copy files in place
-    if ($CONF && scalar(@{$paths_ref})) {
-        my %files_to_move = get_install_paths($paths_ref);
-        for my $in (sort keys %files_to_move) {
-            if (!$vm_mount_point) {
-                $vm_mount_point = mount_vm_disk($vhost);
-            }
-            my $out = $vm_mount_point . $files_to_move{$in};
-            msg("Copying $in to $out\n");
-            copy($in, $out)
-              or carp("WARN: problem copying $in to $out\n");
-        }
-        if ($vm_mount_point) {
-            umount_vm_disk($vhost);
-        }
+    if ($vm_mount_point) {
+        umount_vm_disk($vhost);
     }
 
     return;
@@ -576,16 +588,21 @@ sub create_vm {
     }
 
     # validate size specifications
-    if ($opt_disk !~ /^\d+(?: Gb | Mb )/xmsi) {
+    my $z;
+    if ($CONF->default_disk() !~ /^\d+(?: Gb | Mb )/xmsi) {
         warn "Invalid value for disk size.  Units are Mb or Gb.\n";
         pod2usage(-verbose => 0);
     }
-    $opt_disk =~ tr/gmB/GMb/;
-    if ($opt_memory !~ /^\d+(?: Gb | Mb )/xmsi) {
+    $z = $CONF->default_disk();
+    $z =~ tr/gmB/GMb/;
+    $CONF->default_disk($z);
+    if ($CONF->default_memory() !~ /^\d+(?: Gb | Mb )/xmsi) {
         warn "Invalid value for memory size.  Units are Mb or Gb.\n";
         pod2usage(-verbose => 0);
     }
-    $opt_memory =~ tr/gmB/GMb/;
+    $z = $CONF->default_memory();
+    $z =~ tr/gmB/GMb/;
+    $CONF->default_memory($z);
     if ($opt_swapsize) {
         if ($opt_swapsize !~ /^\d+(?: Gb | Mb )/xmsi) {
             warn "Invalid value for swap size.  Units are Mb or Gb.\n";
@@ -634,9 +651,10 @@ sub create_vm {
     # generate the vm
     my @cmd = ('/usr/bin/xen-create-image');
     push @cmd, "--hostname=${vhost}";
-    push @cmd, "--memory=${opt_memory}";
+    push @cmd, '--memory=' . $CONF->default_memory;
     push @cmd, '--genpass=1';
-    push @cmd, "--size=${opt_disk}";
+    push @cmd, '--size=' . $CONF->default_disk();
+    push @cmd, '--template=' . $CONF->default_template();
     if ($opt_ip eq 'dhcp') {
         push @cmd, "--dhcp";
     } else {
@@ -671,8 +689,25 @@ sub create_vm {
 
     msg($out);
 
-    # Pull in any setup files
-    copy_base_files($vhost);
+    # Look for files to copy from dom0 to domu
+    my %file_list   = ();
+    my $principal   = "host/$vhost";
+    my $keytab_file = $CONF->keytab_directory . '/' . $vhost . '.keytab';
+    if (-e $keytab_file) {
+        $file_list{'/etc/krb5.keytab'} = $keytab_file;
+    }
+    for my $copy_request (sort(@{ $CONF->copy_file })) {
+        if ($copy_request =~ /(\S+) \s+ to \s+ (\S+)/xms) {
+            my $from = $1;
+            my $to   = $2;
+            $file_list{$to} = $from;
+        } else {
+            msg("WARN: bad format.  Skipping copy_file = $copy_request\n");
+        }
+    }
+    if (%file_list) {
+        copy_dom0_files($vhost, \%file_list);
+    }
 
     return;
 }
@@ -702,12 +737,12 @@ sub delete_vm {
     my $cmd_timeout = 60 * $CONF->timeout_delete();
 
     # destroy it first if it is running
-    my @cmd   = ($opt_toolset, 'list');
+    my @cmd   = ($CONF->toolset(), 'list');
     my $out   = run_cmd($cmd_timeout, @cmd);
     my @lines = split /\n/, $out;
     for my $s (@lines) {
         if ($s =~ /^$vhost\s/xms) {
-            @cmd = ($opt_toolset, 'destroy', $vhost);
+            @cmd = ($CONF->toolset(), 'destroy', $vhost);
             $out = run_cmd($cmd_timeout, @cmd);
             msg($out);
             last;
@@ -1058,31 +1093,6 @@ sub list_roles {
 }
 
 # ----------------------------------------------------------------------
-# Find toolset in use
-
-sub find_toolset {
-    my $def_file = '/etc/default/xen';
-    if (-e $def_file) {
-        my $fh;
-        open($fh, '<', $def_file);
-        while (<$fh>) {
-            chomp;
-            my $inline = $_;
-            $inline =~ s/\s+$//xms;
-            if ($inline =~ /TOOLSTACK\s*=\s*(.+)/xms) {
-                my $ts = $1;
-                if ($ts =~ /(?:xl|xm)/xms) {
-                    $opt_toolset = "/usr/sbin/$ts";
-                }
-                last;
-            }
-        }
-        close $fh;
-    }
-    return;
-}
-
-# ----------------------------------------------------------------------
 # print a role file back to STDOUT
 
 sub show_role {
@@ -1285,7 +1295,7 @@ sub umount_vm_disk {
 sub xtool_action {
     my ($action) = @_;
 
-    my @cmd         = ($opt_toolset, $action);
+    my @cmd         = ($CONF->toolset(), $action);
     my $cmd_timeout = 60 * $CONF->timeout_action;
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
@@ -1310,7 +1320,7 @@ sub xtool_host_action {
     }
 
     # Perform the requested action
-    my @cmd         = ($opt_toolset, $action, $vhost);
+    my @cmd         = ($CONF->toolset(), $action, $vhost);
     my $cmd_timeout = 60 * $CONF->timeout_action();
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
@@ -1327,7 +1337,7 @@ sub xtool_conf_action {
     }
     my $conf_file = validate_xen_conf($vhost);
 
-    my @cmd         = ($opt_toolset, 'create', $conf_file);
+    my @cmd         = ($CONF->toolset(), 'create', $conf_file);
     my $cmd_timeout = 60 * $CONF->timeout_action();
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
@@ -1362,7 +1372,7 @@ GetOptions(
     'running'    => \$opt_running,
     'setup=s'    => \$opt_setup,
     'swapsize=s' => \$opt_swapsize,
-    'toolset=s'  => \$opt_toolset,
+    'template=s' => \$opt_template,
     'verbose'    => \$opt_verbose
 ) or die("ERROR: invalid command line arguments\n");
 
@@ -1446,12 +1456,8 @@ if ($vhost && $vhost !~ /[.]/xms) {
 # correct environment
 $ENV{PATH} = $CONF->command_path();
 
-# Figure out which toolset is in use
-find_toolset();
-
 # Do something
 if    ($action eq 'auto')      { auto_maint($auto, $auto_host); }
-elsif ($action eq 'basefiles') { copy_base_files($vhost); }
 elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
 elsif ($action eq 'console')   { console($vhost); }
 elsif ($action eq 'delete')    { delete_vm($vhost); }
@@ -1489,8 +1495,8 @@ cz-xen
 =head1 SYNOPSIS
 
      cz-xen auto [on|off|show] [<vm-name>|ALL]
-     cz-xen basefiles <vm-name>
      cz-xen boot <vm-name>
+     cz-xen console <vm-name>
      cz-xen delete <vm-name>
      cz-xen destroy <vm-name> [--force]
      cz-xen example
@@ -1527,15 +1533,13 @@ The auto action sets, resets, or shows autoboot status.  If no arguments
 are given the default is to "show ALL".  The show action ignores the
 second argument and always displays the autoboot state for all VMs.
 
-=item basefiles <vm-name>
-
-Copy the base files defined in the setup file from the dom0 system to
-the virtual system.  The default setup file is /etc/xen/cz-setup.conf
-and can be overridden with the --setup switch.
-
 =item boot <vm-name>
 
 Boot a virtual machine.
+
+=item console <vm-name>
+
+Connect to the console of a domu.  Must be executed on the hypervisor.
 
 =item delete <vm-name>
 

@@ -1,3 +1,21 @@
+cz-xen-utils (50) unstable; urgency=medium
+
+  * cz-xen changes:
+    - Ad console action back.
+    - Add configuration properties for the xen-tools roles and
+      templates.
+    - Remove basefiles processing and add copy_file property to
+      the configuration file.  copy_file allows the specification
+      of files to copy of dom0 files to the domu, but it use as
+      a general mechanism for loading files onto the domu is
+      discourage.  copy_file processing also checks to see if
+      there is a host keytab for the domu and will copy that
+      into place.
+    - Add memory and disk size properties to the configuration
+      file.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sat, 20 Feb 2021 02:42:02 +0000
+
 cz-xen-utils (49~focal1) unstable; urgency=medium
 
   * Build for focal version of perltidy.

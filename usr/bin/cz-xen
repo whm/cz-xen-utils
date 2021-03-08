@@ -337,7 +337,7 @@ sub read_conf {
     );
     # Parse the id values
     if (!$CONF->xt_id) {
-	die("ERROR: Missing id configurations in $opt_setup");
+        die("ERROR: Missing id configurations in $opt_setup");
     }
     for my $xt (sort(@{ $CONF->xt_id })) {
         if ($xt =~ /(\S+) \s* \/ \s* (\S+) \s* \/ \s* (.*)/xms) {
@@ -713,21 +713,22 @@ sub create_vm {
     }
 
     # generate the vm
-    my $config = $CONF->xen_tools_dir . '/' .$DIST{$opt_id}{'config'};
+    my $config = $CONF->xen_tools_dir . '/' . $DIST{$opt_id}{'config'};
     if (!-e $config) {
-	die("ERROR: missing config file $config");
+        die("ERROR: missing config file $config");
     }
-    my $tmpl   = $CONF->xen_tools_dir . '/' .$DIST{$opt_id}{'template'};
+    my $tmpl = $CONF->xen_tools_dir . '/' . $DIST{$opt_id}{'template'};
     if (!-e $tmpl) {
-	die("ERROR: missing template file $tmpl");
+        die("ERROR: missing template file $tmpl");
     }
     my @cmd = ('/usr/bin/xen-create-image');
     push @cmd, "--hostname=${vhost}";
     push @cmd, '--memory=' . $CONF->default_memory;
     push @cmd, '--genpass=1';
     push @cmd, '--size=' . $CONF->default_disk();
-    push @cmd, "--template=$tmpl"; 
-    push @cmd, "--config=$config"; 
+    push @cmd, "--template=$tmpl";
+    push @cmd, "--config=$config";
+
     if ($opt_ip eq 'dhcp') {
         push @cmd, "--dhcp";
     } else {
@@ -1508,7 +1509,7 @@ With this script Xen virtual machines (VMs) can be created, booted, shutdown,
 and deleted.  Additionally this script can be used to set autoboots
 for selected or all hosted virtual machines.
 
-The system relies on xen-tools for define the configuration for 
+The system relies on xen-tools for define the configuration for
 virtual systems.  There are three files that control the creation of
 machaines:
 
@@ -1666,8 +1667,8 @@ gigabyte.  The default is 4 gigabytes.
 
 =item --id=<string>
 
-Create a virtual machine with us the configuration identified by 
-<string>.  Most commonly this is the distribution, e.g. 'focal', 
+Create a virtual machine with us the configuration identified by
+<string>.  Most commonly this is the distribution, e.g. 'focal',
 but it does not have to be.
 
 =item --diskid=<string>

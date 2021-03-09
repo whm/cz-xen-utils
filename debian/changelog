@@ -1,3 +1,18 @@
+cz-xen-utils (51) unstable; urgency=medium
+
+  * Add support for configuration by "id".  Generally an id is a
+    distribution, but it does not have to me.  The following
+    values can be specified by id:
+    - architecture
+    - distribution
+    - xen-tools configuration file
+    - xen-tools template file
+    - xen-tools roles
+    - use of pygrub (this also requires appropriate settings in
+      the configuration and template files.)
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Mon, 08 Mar 2021 07:25:24 +0000
+
 cz-xen-utils (50~focal1) focal; urgency=medium
 
   * Build for focal version of perltidy.

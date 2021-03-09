@@ -19,34 +19,29 @@ use Pod::Usage;
 use CZ::Xentools;
 use strict;
 
-my $opt_arch = 'amd64';
 my $opt_confirm;
 my $opt_cpu = 2;
 my $opt_debug;
 my $opt_disk;
 my $opt_diskid = '-disk';
-my $opt_dist;
 my $opt_force;
 my $opt_gateway;
 my $opt_help;
+my $opt_id;
 my $opt_ip = 'dhcp';
 my $opt_key;
 my $opt_manual;
 my $opt_mask;
 my $opt_memory;
-my $opt_method;
 my $opt_moptions;
-my $opt_noudev;
 my $opt_password = 'vmPassWord';
-my $opt_pygrub;
-my $opt_role;
 my $opt_running;
 my $opt_setup = '/etc/cz-xen-setup.conf';
 my $opt_swapsize;
-my $opt_template;
 my $opt_verbose;
 
 my $CONF;
+my %DIST;
 my $DEBUG_TIME = time;
 
 ##############################################################################
@@ -185,17 +180,31 @@ sub read_conf {
     );
     $CONF->define('copy_file', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
+        'default_arch',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'amd64'
+        }
+    );
+    $CONF->define(
+        'default_config',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen-tools/xen-tools.conf'
+        }
+    );
+    $CONF->define(
         'default_disk',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => '40Gb'
+            DEFAULT  => '64Gb'
         }
     );
     $CONF->define(
         'default_dist',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => 'bionic'
+            DEFAULT  => 'focal'
         }
     );
     $CONF->define('default_domain', { ARGCOUNT => ARGCOUNT_ONE });
@@ -206,15 +215,20 @@ sub read_conf {
             DEFAULT  => '4Gb'
         }
     );
-    $CONF->define('default_role', { ARGCOUNT => ARGCOUNT_ONE });
+    $CONF->define(
+        'default_role',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 'cz-focal'
+        }
+    );
     $CONF->define(
         'default_template',
         {
             ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => '/etc/xen-tools/xm.tmpl'
+            DEFAULT  => '/etc/xen-tools/vm.tmpl'
         }
     );
-    $CONF->define('dir', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'keytab_directory',
         {
@@ -241,13 +255,6 @@ sub read_conf {
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => 'DOMAIN.TOP'
-        }
-    );
-    $CONF->define(
-        'role_dir',
-        {
-            ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => '/etc/xen-tools/role.d'
         }
     );
     $CONF->define(
@@ -293,41 +300,101 @@ sub read_conf {
         }
     );
     $CONF->define(
-        'toolset',
-        {
-            ARGCOUNT => ARGCOUNT_ONE,
-            DEFAULT  => '/usr/sbin/xl'
-        }
-    );
-    $CONF->define(
         'xen_cfg_dir',
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => '/etc/xen'
         }
     );
+    $CONF->define(
+        'xen_tools_dir',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen-tools'
+        }
+    );
     $CONF->define('xen_server', { ARGCOUNT => ARGCOUNT_LIST });
+    $CONF->define('xt_id',      { ARGCOUNT => ARGCOUNT_LIST });
 
     # Read the configuration file if there is one
     if (-e $opt_setup) {
         $CONF->file($opt_setup);
+    } else {
+        die("ERROR: missing configuration file $opt_setup");
+    }
+
+    # Parse out configuration by id.  In most cases the id is
+    # synomous with distribution, but it does not have to be.
+    # The id configuration attributes have the form id/attr/value.
+    my %valid_attr = (
+        'arch'     => 1,
+        'dist'     => 1,
+        'config'   => 1,
+        'pygrub'   => 1,
+        'role'     => 1,
+        'setup'    => 1,
+        'template' => 1,
+    );
+    # Parse the id values
+    if (!$CONF->xt_id) {
+        die("ERROR: Missing id configurations in $opt_setup");
+    }
+    for my $xt (sort(@{ $CONF->xt_id })) {
+        if ($xt =~ /(\S+) \s* \/ \s* (\S+) \s* \/ \s* (.*)/xms) {
+            my $id   = $1;
+            my $attr = $2;
+            my $val  = $3;
+            if (!$valid_attr{$attr}) {
+                msg("WARN: invalid xt_id '$id'. Skipping: $xt\n");
+                next;
+            }
+            $DIST{$id}{$attr} = $val;
+        } else {
+            msg("WARN: bad format.  Skipping $xt\n");
+        }
+    }
+    # Set defaults for the id attributes
+    for my $id (sort keys %DIST) {
+        # set arch
+        if (!$DIST{$id}{'arch'}) {
+            $DIST{$id}{'arch'} = $CONF->default_arch();
+        }
+        if ($DIST{$id}{'arch'} !~ /^(?:i386|amd64)$/xms) {
+            msg("WARN: invalid arch $DIST{$id}{'arch'}\n");
+            msg("INFO: setting arch to amd64\n");
+            $DIST{$id}{'arch'} = 'amd64';
+        }
+        # set xen-tools config
+        if (!$DIST{$id}{'config'}) {
+            $DIST{$id}{'config'} = $CONF->default_config();
+        }
+        # set dist
+        if (!$DIST{$id}{'dist'}) {
+            $DIST{$id}{'dist'} = $CONF->default_dist();
+        }
+        # set role
+        if (!$DIST{$id}{'role'}) {
+            $DIST{$id}{'role'} = $CONF->default_role();
+        }
+        my @role_files = split /,/, $DIST{$opt_id}{'role'};
+        for my $f (@role_files) {
+            my $role_file = $CONF->xen_tools_dir() . "/role.d/$f";
+            if (!-e $role_file) {
+                msg("ERROR: $role_file is missing\n");
+            }
+        }
+        # set template
+        if (!$DIST{$id}{'template'}) {
+            $DIST{$id}{'template'} = $CONF->default_template();
+        }
     }
 
     # Command line overrides
     if ($opt_disk) {
         $CONF->default_disk($opt_disk);
     }
-    if ($opt_dist) {
-        $CONF->default_dist($opt_dist);
-    }
     if ($opt_memory) {
         $CONF->default_memory($opt_memory);
-    }
-    if ($opt_role) {
-        $CONF->default_role($opt_role);
-    }
-    if ($opt_template) {
-        $CONF->default_template($opt_template);
     }
 
     return;
@@ -351,11 +418,17 @@ sub example_conf {
     msg("copy_file = /some/dir/file1 to /some/dir/file1\n");
     msg("copy_file = /other/dir/file2 to /some/dir/file3\n");
     msg("#\n");
+    msg("# Default architecture\n");
+    msg("default_arch = amd64\n");
+    msg("#\n");
     msg("# Default disk size\n");
-    msg("default_disk = 40Gb\n");
+    msg("default_disk = 64Gb\n");
+    msg("#\n");
+    msg("# Default xen-tools configuration\n");
+    msg("default_config = xen-tools.conf\n");
     msg("#\n");
     msg("# Default distribution\n");
-    msg("default_dist = bionic\n");
+    msg("default_dist = focal\n");
     msg("#\n");
     msg("# Default domain\n");
     msg("default_domain = ca-zephyr.org\n");
@@ -367,7 +440,7 @@ sub example_conf {
     msg("default_role = cz-focal\n");
     msg("#\n");
     msg("# Default xen-tools template for xen cfg generation\n");
-    msg("default_template = /etc/xen-tools/xm.tmpl\n");
+    msg("default_template = xm.tmpl\n");
     msg("#\n");
     msg("# Directory that hosts keytabs for virtual machines.\n");
     msg("keytab_directory = /etc/xen-tools/keytabs\n");
@@ -379,9 +452,6 @@ sub example_conf {
     msg("krb_realm = DOMAIN.TOP\n");
     msg("tgt_file = /tmp/cz-xen.tgt\n");
     msg("#\n");
-    msg("# The xen-tools role directroy\n");
-    msg("role_dir = /etc/xen-tools/role.d\n");
-    msg("#\n");
     msg("# The timeout unit of measure is minutes\n");
     msg("timeout_action = 2\n");
     msg("timeout_delete = 5\n");
@@ -389,17 +459,31 @@ sub example_conf {
     msg("timeout_mount = 2\n");
     msg("timeout_new = 30\n");
     msg("#\n");
-    msg("# Toolset to use to manage domu systems.  This should be\n");
-    msg("# changed only if the location of xl changes\n");
-    msg("toolset = /usr/sbin/xl\n");
-    msg("#\n");
     msg("# Xen configuration directory\n");
     msg("xen_cfg_dir = /etc/xen\n");
+    msg("#\n");
+    msg("# xen-tools directory\n");
+    msg("xen_tools_dir = /etc/xen-tools\n");
     msg("#\n");
     msg("# Servers in the xen pool.  This used by the find command.\n");
     msg("xen_server = server1.domain.top\n");
     msg("xen_server = server2.domain.top\n");
     msg("xen_server = server3.domain.top\n");
+    msg("#\n");
+    msg("# Define installation identifiers.  These configuration \n");
+    msg("# describe the VM build parameters. The parameters have the\n");
+    msg("# form id/attr/value.\n");
+    msg("xt_id = bionic / arch     / amd64\n");
+    msg("xt_id = bionic / config   / xen-tools-pygrub.conf\n");
+    msg("xt_id = bionic / dist     / bionic\n");
+    msg("xt_id = bionic / pygrub   / 1\n");
+    msg("xt_id = bionic / role     / udev,cz-bionic\n");
+    msg("xt_id = bionic / template / xm-pygrub.tmpl\n");
+    msg("#\n");
+    msg("xt_id = focal / config   / xen-tools-pvh.conf\n");
+    msg("xt_id = focal / dist     / focal\n");
+    msg("xt_id = focal / role     / cz-focal\n");
+    msg("xt_id = focal / template / xm-pyh.tmpl\n");
     msg("#\n");
 
     return;
@@ -433,7 +517,7 @@ sub get_install_paths {
 
 sub console {
     my ($vhost) = @_;
-    my @cmd = ($CONF->toolset(), 'console', $vhost);
+    my @cmd = ('xl', 'console', $vhost);
     msg(join(' ', @cmd) . "\n");
     exec @cmd;
     return;
@@ -479,7 +563,7 @@ sub auto_maint {
         if ($file =~ /[.]cfg$/xms) {
             my $a_host = $file;
             $a_host =~ s/[.]cfg$//xms;
-            $cfg_file{ $CONF->role_dir() . "/${file}" } = $a_host;
+            $cfg_file{ $CONF->xen_cfg_dir() . "/${file}" } = $a_host;
         }
     }
     closedir($dir);
@@ -611,36 +695,16 @@ sub create_vm {
         $opt_swapsize =~ tr/gmB/GMb/;
     }
 
-    # validate install method
-    if ($opt_method && $opt_method !~ /^(?: rinse | debootstrap)$/xms) {
-        warn "Invalid method\n";
-        pod2usage(-verbose => 0);
-    }
-
-    # validate arch
-    if ($opt_arch && $opt_arch !~ /^(?:i386|amd64)$/xms) {
-        warn "Invalid arch\n";
-        pod2usage(-verbose => 0);
-    }
-
-    # validate the distribution
-    my $dist_dir;
-    if (-e '/usr/lib/xen-tools') {
-        $dist_dir = '/usr/lib/xen-tools';
-    } elsif (-e '/usr/share/xen-tools') {
-        $dist_dir = '/usr/share/xen-tools';
-    } else {
-        warn "No OS distributions available\n";
-        pod2usage(-verbose => 0);
-    }
-    if (!-e "${dist_dir}/" . $CONF->default_dist() . '.d') {
-        warn 'Invalid distribution ' . $CONF->default_dist() . "\n";
-        pod2usage(-verbose => 0);
-    }
-
-    # set the default method
-    if (!$opt_method && $CONF->default_dist() =~ /^(?: fedora | centos )/xms) {
-        $opt_method = 'rinse';
+    # validate the id
+    if (!$DIST{$opt_id}) {
+        msg("ERROR: Invalid id $opt_id\n");
+        msg('INFO: Valid values are ');
+        for my $id (sort keys %DIST) {
+            msg("$id ");
+        }
+        msg("\n");
+        msg("FATAL: valid id is required\n");
+        exit 1;
     }
 
     # Get the keytab for the host if requested
@@ -649,12 +713,22 @@ sub create_vm {
     }
 
     # generate the vm
+    my $config = $CONF->xen_tools_dir . '/' . $DIST{$opt_id}{'config'};
+    if (!-e $config) {
+        die("ERROR: missing config file $config");
+    }
+    my $tmpl = $CONF->xen_tools_dir . '/' . $DIST{$opt_id}{'template'};
+    if (!-e $tmpl) {
+        die("ERROR: missing template file $tmpl");
+    }
     my @cmd = ('/usr/bin/xen-create-image');
     push @cmd, "--hostname=${vhost}";
     push @cmd, '--memory=' . $CONF->default_memory;
     push @cmd, '--genpass=1';
     push @cmd, '--size=' . $CONF->default_disk();
-    push @cmd, '--template=' . $CONF->default_template();
+    push @cmd, "--template=$tmpl";
+    push @cmd, "--config=$config";
+
     if ($opt_ip eq 'dhcp') {
         push @cmd, "--dhcp";
     } else {
@@ -669,7 +743,7 @@ sub create_vm {
     if ($opt_cpu) {
         push @cmd, "--vcpus=$opt_cpu";
     }
-    if ($opt_pygrub) {
+    if ($DIST{$opt_id}{'pygrub'}) {
         push @cmd, '--pygrub';
     }
     if ($opt_swapsize) {
@@ -677,12 +751,9 @@ sub create_vm {
     } else {
         push @cmd, '--noswap';
     }
-    push @cmd, '--role=' . $CONF->default_role();
-    push @cmd, '--dist=' . $CONF->default_dist();
-    push @cmd, "--arch=$opt_arch";
-    if ($opt_method) {
-        push @cmd, "--install-method=${opt_method}";
-    }
+    push @cmd, "--role=$DIST{$opt_id}{'role'}";
+    push @cmd, "--dist=$DIST{$opt_id}{'dist'}";
+    push @cmd, "--arch=$DIST{$opt_id}{'arch'}";
     msg("Be patient this takes time ...\n");
     my $create_timeout = 60 * $CONF->timeout_new();
     my $out            = run_cmd($create_timeout, @cmd);
@@ -737,12 +808,12 @@ sub delete_vm {
     my $cmd_timeout = 60 * $CONF->timeout_delete();
 
     # destroy it first if it is running
-    my @cmd   = ($CONF->toolset(), 'list');
+    my @cmd   = ('xl', 'list');
     my $out   = run_cmd($cmd_timeout, @cmd);
     my @lines = split /\n/, $out;
     for my $s (@lines) {
         if ($s =~ /^$vhost\s/xms) {
-            @cmd = ($CONF->toolset(), 'destroy', $vhost);
+            @cmd = ('xl', 'destroy', $vhost);
             $out = run_cmd($cmd_timeout, @cmd);
             msg($out);
             last;
@@ -986,33 +1057,18 @@ sub get_keytab {
 }
 
 # ----------------------------------------------------------------------
-# List current distributions
+# List current installation options
 
-sub list_dists {
-
-    # List files in the /usr/lib/xen-tools directory
-    msg("Installable distributions:\n");
-    my $dir;
-    if (-e '/usr/lib/xen-tools') {
-        $dir = '/usr/lib/xen-tools';
-    } elsif (-e '/usr/share/xen-tools') {
-        $dir = '/usr/share/xen-tools';
-    } else {
-        die("ERROR: can't find any distributions");
-    }
-    my %dir_list = ();
-    opendir(my $df, $dir)
-      or croak("ERROR: problem opening directory $dir\n");
-    while (my $file = readdir($df)) {
-        next if $file eq 'common.sh';
-        next if $file =~ /^[.]{1,2}$/xms;
-        $file =~ s/[.]d$//xms;
-        $dir_list{$file} = 1;
-    }
-    closedir $df
-      or croak("ERROR: problem closing directory $dir\n");
-    for my $d (sort keys %dir_list) {
-        msg("$d\n");
+sub list_ids {
+    # List ids defined in the setup file
+    msg("Installable ids:\n");
+    for my $id (sort keys %DIST) {
+        msg("  $id\n");
+        if ($opt_verbose) {
+            for my $attr (sort keys %{ $DIST{$id} }) {
+                msg("    $attr = $DIST{$id}{$attr}\n");
+            }
+        }
     }
     return;
 }
@@ -1066,61 +1122,6 @@ sub list_info {
     my @out_lines   = split /\n/, $out;
     for my $z (@out_lines) {
         msg("$z\n");
-    }
-    return;
-}
-
-# ----------------------------------------------------------------------
-# List xen-tools rules excluding the README file
-
-sub list_roles {
-
-    # List files in the /usr/lib/xen-tools/role.d directory
-    msg('Roles found in ' . $CONF->role_dir() . "\n");
-    my $df;
-    my %dir_list = ();
-    opendir($df, $CONF->role_dir());
-    while (my $file = readdir($df)) {
-        next if $file eq 'README';
-        next if $file =~ /^[.]{1,2}$/xms;
-        $file =~ s/[.]d$//xms;
-        $dir_list{$file} = 1;
-    }
-    for my $d (sort keys %dir_list) {
-        msg("$d\n");
-    }
-    return;
-}
-
-# ----------------------------------------------------------------------
-# print a role file back to STDOUT
-
-sub show_role {
-    my ($role) = @_;
-
-    if (!$role || $role eq 'ALL') {
-        opendir(my $dir, $CONF->role_dir())
-          or croak('ERROR: problem opening ' . $CONF->role_dir() . "\n");
-        while (my $file = readdir($dir)) {
-            if ($file !~ /^[.]/xms) {
-                msg("$file\n");
-            }
-        }
-        closedir($dir);
-        return;
-    }
-
-    my $role_file = $CONF->role_dir() . "/$role";
-    if (-e $role_file) {
-        my $rf;
-        open $rf, '<', $role_file or croak("Cannot open $role_file\n");
-        while (<$rf>) {
-            my $line = $_;
-            msg($_);
-        }
-        close $rf or msg("WARN: Problem closing $role_file");
-    } else {
-        msg("ERROR: $role_file not found");
     }
     return;
 }
@@ -1295,7 +1296,7 @@ sub umount_vm_disk {
 sub xtool_action {
     my ($action) = @_;
 
-    my @cmd         = ($CONF->toolset(), $action);
+    my @cmd         = ('xl', $action);
     my $cmd_timeout = 60 * $CONF->timeout_action;
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
@@ -1320,7 +1321,7 @@ sub xtool_host_action {
     }
 
     # Perform the requested action
-    my @cmd         = ($CONF->toolset(), $action, $vhost);
+    my @cmd         = ('xl', $action, $vhost);
     my $cmd_timeout = 60 * $CONF->timeout_action();
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
@@ -1337,7 +1338,7 @@ sub xtool_conf_action {
     }
     my $conf_file = validate_xen_conf($vhost);
 
-    my @cmd         = ($CONF->toolset(), 'create', $conf_file);
+    my @cmd         = ('xl', 'create', $conf_file);
     my $cmd_timeout = 60 * $CONF->timeout_action();
     my $out         = run_cmd($cmd_timeout, @cmd);
     msg($out);
@@ -1349,30 +1350,25 @@ sub xtool_conf_action {
 ##############################################################################
 
 GetOptions(
-    'arch=s'     => \$opt_arch,
     'confirm'    => \$opt_confirm,
     'cpu=i'      => \$opt_cpu,
     'debug'      => \$opt_debug,
     'disk=s'     => \$opt_disk,
     'diskid=s'   => \$opt_diskid,
-    'dist=s'     => \$opt_dist,
     'force'      => \$opt_force,
     'gateway=s'  => \$opt_gateway,
     'help'       => \$opt_help,
+    'id=s'       => \$opt_id,
     'ip=s'       => \$opt_ip,
     'key!'       => \$opt_key,
     'manual'     => \$opt_manual,
     'mask=s'     => \$opt_mask,
     'memory=s'   => \$opt_memory,
-    'method=s'   => \$opt_method,
     'moptions=s' => \$opt_moptions,
     'password=s' => \$opt_password,
-    'pygrub'     => \$opt_pygrub,
-    'role=s'     => \$opt_role,
     'running'    => \$opt_running,
     'setup=s'    => \$opt_setup,
     'swapsize=s' => \$opt_swapsize,
-    'template=s' => \$opt_template,
     'verbose'    => \$opt_verbose
 ) or die("ERROR: invalid command line arguments\n");
 
@@ -1383,21 +1379,18 @@ $| = 1;
 pod2usage(-verbose => 0) if $opt_help;
 pod2usage(-verbose => 2) if $opt_manual;
 pod2usage(-verbose => 0) if !$ARGV[0] || $ARGV[0] eq 'help';
-pod2usage(-verbose => 2) if !$ARGV[0] || $ARGV[0] eq 'manual';
+pod2usage(-verbose => 2) if $ARGV[0] eq 'manual';
 
 my $action = $ARGV[0];
+
+if ($action eq 'example') {
+    example_conf();
+    exit;
+}
 
 # read the configuration file and setup syslog
 read_conf();
 cz_init_tools(basename($0), $opt_debug);
-
-# Set the default for a role
-if ($action eq 'new') {
-    my $role_file = $CONF->role_dir() . '/' . $CONF->default_role();
-    if (!-e $role_file) {
-        msg("WARN: $role_file is not present.\n");
-    }
-}
 
 # Defaults for networking setup if static address
 if ($opt_ip ne 'dhcp') {
@@ -1419,14 +1412,11 @@ if ($opt_ip ne 'dhcp') {
 }
 
 my $vhost;
-my $role;
 my $auto;
 my $auto_host;
 
 if ($ARGV[1]) {
-    if ($action eq 'showrole') {
-        $role = $ARGV[1];
-    } elsif ($action eq 'auto') {
+    if ($action eq 'auto') {
         if (scalar(@ARGV) > 3) {
             warn("Too many arguments on the command line\n");
             exit(1);
@@ -1462,7 +1452,6 @@ elsif ($action eq 'boot')      { xtool_conf_action($vhost, 'create'); }
 elsif ($action eq 'console')   { console($vhost); }
 elsif ($action eq 'delete')    { delete_vm($vhost); }
 elsif ($action eq 'destroy')   { xtool_host_action($vhost, $action); }
-elsif ($action eq 'example')   { example_conf(); }
 elsif ($action eq 'find')      { find_vm(@ARGV); }
 elsif ($action eq 'freedisk')  { list_freedisk_space(); }
 elsif ($action eq 'freemem')   { list_freemem(); }
@@ -1470,13 +1459,11 @@ elsif ($action eq 'info')      { list_info(); }
 elsif ($action eq 'key')       { get_keytab($vhost); }
 elsif ($action eq 'list')      { list_vms(); }
 elsif ($action eq 'listdisks') { list_vm_disks($vhost); }
-elsif ($action eq 'listdists') { list_dists(); }
-elsif ($action eq 'listroles') { list_roles(); }
+elsif ($action eq 'listids')   { list_ids(); }
 elsif ($action eq 'mount')     { mount_vm_disk($vhost); }
 elsif ($action eq 'new')       { create_vm($vhost); }
 elsif ($action eq 'reboot')    { xtool_host_action($vhost, $action); }
 elsif ($action eq 'show')      { xtool_action('list'); }
-elsif ($action eq 'showrole')  { show_role($role); }
 elsif ($action eq 'shutdown')  { xtool_host_action($vhost, $action); }
 elsif ($action eq 'umount')    { umount_vm_disk($vhost); }
 else {
@@ -1490,7 +1477,7 @@ __END__
 
 =head1 NAME
 
-cz-xen
+cz-xen - Manage Xen Virtual Machines
 
 =head1 SYNOPSIS
 
@@ -1505,23 +1492,48 @@ cz-xen
      cz-xen freemem
      cz-xen help
      cz-xen list
-     cz-xen listdists
      cz-xen listdisks <vm-name>
-     cz-xen listroles
+     cz-xen listids
      cz-xen key <vm-name>
      cz-xen manual
      cz-xen mount <vm-name> [<mount-options>]
      cz-xen new <vm-name>
      cz-xen reboot <vm-name>
      cz-xen show
-     cz-xen showrole <rolename>
      cz-xen shutdown <vm-name>
      cz-xen umount <vm-name>
 
 =head1 DESCRIPTION
 
-Manage xen virtual machines.  The name of the machine and the ip-address
-are required.
+With this script Xen virtual machines (VMs) can be created, booted, shutdown,
+and deleted.  Additionally this script can be used to set autoboots
+for selected or all hosted virtual machines.
+
+The system relies on xen-tools for define the configuration for
+virtual systems.  There are three files that control the creation of
+machaines:
+
+=over 4
+
+=item xen-tools configuration files
+
+The configuration file control how VMs are built.  After the base
+configuration is read then the configuration file that is defined in
+the cz-xen-setup.conf file is read.
+
+=item xen-tools template files
+
+The templates which controls how the xen configuation file is built.
+
+=item xen-tools role files
+
+The configures new VMs.
+
+=back
+
+The default configuration file for this script is
+/etc/cz-xen-setup.conf.  For detail description of the setup file see
+the "example" action.
 
 =head1 ACTIONS
 
@@ -1585,13 +1597,13 @@ must exist and will be downloaded into
 Brief listing of currently defined virtual machines.  A more complete
 listing can be generating by adding the --verbose switch.
 
-=item listdists
-
-List current available distributions to use to create virtual machines.
-
 =item listdisks <vm-name>
 
 List disks associated with a virtual machine.
+
+=item listids
+
+List the configured VM creation options.
 
 =item mount <vm-name>
 
@@ -1609,12 +1621,6 @@ Reboot a virtual machine.
 =item show
 
 Show the currently executing virtual machines.
-
-=item showrole [role|ALL]
-
-If not argument or ALL is supplied then a list of role files is display.
-If an individual role is supplied then the contents of that role are
-displayed.
 
 =item shutdown <vm-name>
 
@@ -1635,10 +1641,6 @@ Dismount a VM's disk.
 The host name of the vm.  Can be fully qualified name.  If not
 a fully qualified name then the domain from the configuration
 file set used.
-
-=item --arch=i386|amd64
-
-The architecture of the VM.  Defaults to amd64.
 
 =item --cpu=<number of CPUs>
 
@@ -1663,9 +1665,11 @@ The size of the disk to create for the virtual machine.  The value
 should be an integer followed by the units.  For example 1Gb is 1
 gigabyte.  The default is 4 gigabytes.
 
-=item --dist=<dist-name>
+=item --id=<string>
 
-Create a virtual machine with dist-name operation system.
+Create a virtual machine with us the configuration identified by
+<string>.  Most commonly this is the distribution, e.g. 'focal',
+but it does not have to be.
 
 =item --diskid=<string>
 
@@ -1712,24 +1716,10 @@ The netmask for VMs with statically assigned IP addresses.  If not
 specified then the value from the /etc/xen-tools/xen-tools.conf file
 is used.
 
-=item --noudev
-
-Do not include the udev role in the list of roles.
-
 =item --password=<passphrase>
 
 Set the password for the root user of a new virtual machine.  Defaults
 to vmPassWord.
-
-=item --pygrub
-
-Generate a Xen configuration file that uses pygrub to boot the new
-virtual machine.
-
-=item --role=<comma separated list>
-
-Specifies the xen-tools roles to use when building a host.  The
-default is udev,cz-<distname>.
 
 =item --running
 
@@ -1746,11 +1736,6 @@ the cluster.
 
 The size of the swap file.
 
-=item --toolset=[xl|xm]
-
-The tool set to use.  The default is either the setting in the
-TOOLSTACK setting in the /etc/default/xen file or 'xm'.
-
 =item --verbose
 
 We applicable display additional information.  Currently only affects
@@ -1762,13 +1747,15 @@ the output of the list command.
 
 Create a Ubuntu bionic virtual machine:
 
-    cz-xen new somehost --disk=10Gb --memory=500Mb --dist=bionic
+    cz-xen new somehost --disk=10Gb --memory=500Mb --id=focal
 
 =head1 AUTHOR
 
 Bill MacAllister <bill@ca-zephyr.org>
 
 =head1 COPYRIGHT
+
+License: Perl
 
 This software was developed for use at Stanford University 2012-2014.
 All rights reserved.

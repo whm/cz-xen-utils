@@ -1,3 +1,10 @@
+cz-xen-utils (51~focal1) focal; urgency=medium
+
+  * Build for ubuntu.  This is marked for focal, but it works on bionic
+    as well.
+
+ -- Bill MacAllister <whm@dropbox.com>  Tue, 09 Mar 2021 01:59:50 +0000
+
 cz-xen-utils (51) unstable; urgency=medium
 
   * Add support for configuration by "id".  Generally an id is a

@@ -1,0 +1,128 @@
+#!/usr/bin/perl
+#
+# File: cz-xen-backup-control
+# Description: Backup all xen guests on a Xen system
+# Author: Bill MacAllister <mac@ca-zephyr.org>
+
+use Getopt::Long;
+use Pod::Usage;
+use strict;
+
+my $opt_debug;
+my $opt_dir = '/srv/xen-backup';
+my $opt_help;
+my $opt_manual;
+
+##############################################################################
+# Main Routine
+##############################################################################
+
+GetOptions(
+    'debug'  => \$opt_debug,
+    'dir=s'  => \$opt_dir,
+    'help'   => \$opt_help,
+    'manual' => \$opt_manual
+) or die("ERROR: invalid command line arguments\n");
+
+# Flush output immediately
+$| = 1;
+
+# help the poor souls out
+pod2usage(-verbose => 0) if $opt_help;
+pod2usage(-verbose => 2) if $opt_manual;
+pod2usage(-verbose => 0) if !$ARGV[0] || $ARGV[0] eq 'help';
+pod2usage(-verbose => 2) if !$ARGV[0] || $ARGV[0] eq 'manual';
+
+my $backup_type = $ARGV[0];
+if ($backup_type ne 'save' && $backup_type ne 'full') {
+    die("ERROR: backup type must be either 'save' or 'full'\n");
+}
+
+my $xen_path = '/etc/xen';
+opendir(my $dir, $xen_path)
+  or die "ERROR: problem reading $xen_path - $!\n";
+my %xen_host = ();
+while (my $f = readdir($dir)) {
+    if ($f =~ s/[.]cfg$//xms) {
+        $xen_host{$f} = 1;
+    }
+}
+closedir($dir) or die("ERROR: problem closing $dir - $!\n");
+
+for my $x (sort keys %xen_host) {
+    my $cmd;
+    if ($backup_type eq 'full') {
+        $cmd = "cz-xen-backup backup $x";
+    } else {
+        $cmd = "xl save -c $x ${opt_dir}/${x}.save";
+    }
+    print("Executing: $cmd\n");
+    `$cmd`;
+}
+
+exit;
+
+__END__
+
+=head1 NAME
+
+cz-xen-backup-control
+
+=head1 SYNOPSIS
+
+     cz-xen-backup-control full|save|help|manual [--debug]
+
+=head1 DESCRIPTION
+
+This script performs a backup of all Xen systems on a Xen hypervisor.
+
+=head1 BACKUP TYPES
+
+=head2 save
+
+The backup type 'save' uses the xen-tools 'xl save -c' command to
+backup a Xen guest.Manage xen virtual machines.  'save' backups do not
+affect the running system.  The default location of 'save' backups is
+/xen/xen-backup.
+
+=head2 full
+
+The backup type of 'full' uses the cz-xen-backup script.  The default
+action for this script is to shutdown the guest, take and lvm snapshot
+of the system, reboot the system, copy the guest configuration file to
+the backup location, and create a record of the LVM configuration in
+the backup location.
+
+=head1 OPTIONS
+
+=over 4
+
+=item --dir=<path>
+
+The path to store 'save' backups.  The default location is /srv/xen-backup.
+
+=item --debug
+
+Generate debugging messages.
+
+=item --help
+
+A short help message.
+
+=item --manual
+
+The complete documentation.
+
+=back 
+
+=head1 AUTHOR
+
+Bill MacAllister <bill@ca-zephyr.org>
+
+=head1 COPYRIGHT
+
+Copyright (c) Bill MacAllister <mac@ca-zephyr.org>
+
+License: Perl Artistic License
+
+=cut

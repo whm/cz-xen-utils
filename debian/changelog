@@ -1,3 +1,11 @@
+cz-xen-utils (52) unstable; urgency=medium
+
+  * Add the cz-xen-backup-control script.  This is a hack to quickly
+    add the capability to backup all VMs on a system.  It will be
+    merged into cz-xen-backup at some point.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sat, 13 Mar 2021 03:37:35 +0000
+
 cz-xen-utils (51) unstable; urgency=medium
 
   * Add support for configuration by "id".  Generally an id is a

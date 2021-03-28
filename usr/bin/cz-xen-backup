@@ -372,6 +372,7 @@ sub create_a_snapshot {
     push @lv_cmd, '--size', $CONF->snapshot_size;
     push @lv_cmd, '--snapshot';
     push @lv_cmd, '--name', $snapshot_name;
+    push @lv_cmd, '--yes';
     push @lv_cmd, $disk_device;
     msg(run_cmd(20, 0, @lv_cmd));
 
@@ -708,6 +709,7 @@ sub restore_vm {
             push @lv_cmd, 'lvcreate';
             push @lv_cmd, "--size=$this_size";
             push @lv_cmd, "--name=$this_name";
+    push @lv_cmd, '--yes';
             push @lv_cmd, $this_vg;
             msg(run_cmd(180, 0, @lv_cmd));
             if ($this_path =~ /-swap$/xms) {

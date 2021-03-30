@@ -709,9 +709,10 @@ sub restore_vm {
             push @lv_cmd, 'lvcreate';
             push @lv_cmd, "--size=$this_size";
             push @lv_cmd, "--name=$this_name";
-    push @lv_cmd, '--yes';
+            push @lv_cmd, '--yes';
             push @lv_cmd, $this_vg;
             msg(run_cmd(180, 0, @lv_cmd));
+            
             if ($this_path =~ /-swap$/xms) {
                 # Create a swap partition
                 msg(run_cmd(30, 0, 'mkswap', $this_path));

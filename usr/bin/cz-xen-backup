@@ -276,7 +276,7 @@ sub display_example_conf {
     msg("shutdown_sleep = 10\n");
 
     msg("#\n");
-    msg("# Number of shutdown attempts before aborting backup.\n");
+    msg("# Number of gentle shutdown attempts before destroying the VM.\n");
     msg("shutdown_count = 10\n");
 
     msg("#\n");
@@ -500,10 +500,15 @@ sub backup_vm {
                 $cnt       = $CONF->shutdown_count;
             }
         }
+        # If gentle shutdown fails then destroy the VM
         if (!$shut_okay) {
-            die("ERROR: shutdown of $vhost failed.\n");
+            msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'destroy', $vhost));
+            my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
+            if ($stat =~ /$vhost/xms) {
+                die("ERROR: shutdown of $vhost failed");
+            }
         }
-
+        
         # Create snapshotsbackup each disk
         my %snapshot_list = ();
         for my $d (@disk_list) {
@@ -712,7 +717,7 @@ sub restore_vm {
             push @lv_cmd, '--yes';
             push @lv_cmd, $this_vg;
             msg(run_cmd(180, 0, @lv_cmd));
-            
+
             if ($this_path =~ /-swap$/xms) {
                 # Create a swap partition
                 msg(run_cmd(30, 0, 'mkswap', $this_path));

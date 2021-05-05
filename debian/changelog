@@ -1,7 +1,7 @@
 cz-xen-utils (54) unstable; urgency=medium
 
-  * Fork commands that do not parse the output using the parents
-    with STDERR and STDOUT.
+  * Fork commands that do not parse the output of the the parents
+    STDERR and STDOUT.
   * Update cz-xen-backup to attempt to destroy the VM is shutdown
     attempts fail.
 

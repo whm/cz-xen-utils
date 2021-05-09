@@ -27,6 +27,7 @@ my $opt_debug;
 my $opt_example;
 my $opt_help;
 my $opt_manual;
+my $opt_vg;
 my $opt_conf = '/etc/cz-xen-backup.conf';
 
 my $CONF;
@@ -124,6 +125,13 @@ sub read_conf {
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => 'NONE'
+        }
+    );
+    $CONF->define(
+        'copy_timeout',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '600'
         }
     );
     $CONF->define(
@@ -246,6 +254,10 @@ sub display_example_conf {
     msg("# Compression to use when creating the disk files.\n");
     msg("# Valid values are 'NONE', 'z', or 'J'\n");
     msg("compression = NONE\n");
+
+    msg("#\n");
+    msg("# Timeout value for copy operations.\n");
+    msg("copy_timeout = 900\n");
 
     msg("#\n");
     msg("# Default DNS domain to use in forming FQDNs.\n");
@@ -663,29 +675,31 @@ sub restore_vm {
         }
 
         # Read the volume group from the xen-tools configuration file.
-        my $xen_tools_conf = '/etc/xen-tools/xen-tools.conf';
         my $xen_tools_vg;
-        if (-e $xen_tools_conf) {
-            open(my $xt, '<', $xen_tools_conf)
-              or die("ERROR: problem opeing $xen_tools_conf\n");
-            while (<$xt>) {
-                chomp;
-                my $inline = $_;
-                if ($inline =~ /^\s*#/xms || $inline =~ /^\s*$/xms) {
-                    next;
+        if (!$opt_vg) {
+            my $xen_tools_conf = '/etc/xen-tools/xen-tools.conf';
+            if (-e $xen_tools_conf) {
+                open(my $xt, '<', $xen_tools_conf)
+                  or die("ERROR: problem opeing $xen_tools_conf\n");
+                while (<$xt>) {
+                    chomp;
+                    my $inline = $_;
+                    if ($inline =~ /^\s*#/xms || $inline =~ /^\s*$/xms) {
+                        next;
+                    }
+                    if ($inline =~ /lvm\s*=\s*(\S+)/xms) {
+                        $xen_tools_vg = $1;
+                        last;
+                    }
                 }
-                if ($inline =~ /lvm\s*=\s*(\S+)/xms) {
-                    $xen_tools_vg = $1;
-                    last;
-                }
-            }
-            close $xt
-              or croak("ERROR: problem closing $xen_tools_conf\n");
-            if ($opt_debug) {
-                if ($xen_tools_vg) {
-                    dbg("xen-tools.conf vg = $xen_tools_vg");
-                } else {
-                    dbg("lvm not found in xen-tools.conf");
+                close $xt
+                  or croak("ERROR: problem closing $xen_tools_conf\n");
+                if ($opt_debug) {
+                    if ($xen_tools_vg) {
+                        dbg("xen-tools.conf vg = $xen_tools_vg");
+                    } else {
+                        dbg("lvm not found in xen-tools.conf");
+                    }
                 }
             }
         }
@@ -718,11 +732,15 @@ sub restore_vm {
             $this_size =~ s/iB$//xms;
             my $this_vg;
             my $lvm_vg = $lvm_list{$i}{'vgname'};
-            if ($xen_tools_vg) {
-                $this_vg   = $xen_tools_vg;
-                $this_path = "/$path_dev/$xen_tools_vg/$path_disk";
+            if ($opt_vg) {
+                $this_vg = $opt_vg;
             } else {
-                $this_vg = $lvm_vg;
+                if ($xen_tools_vg) {
+                    $this_vg   = $xen_tools_vg;
+                    $this_path = "/$path_dev/$xen_tools_vg/$path_disk";
+                } else {
+                    $this_vg = $lvm_vg;
+                }
             }
             if (!$this_vg) {
                 die("ERROR: volume group not found for $this_name.");
@@ -730,7 +748,7 @@ sub restore_vm {
             }
             # If the volume group is different on this system modify
             # the paths in the configuration file.
-            if ($xen_tools_vg ne $lvm_vg) {
+            if ($this_vg ne $lvm_vg) {
                 my @xen_vm_lines = ();
                 open(my $cin, '<', $vm_config)
                   or die("ERROR: problem opening $vm_config\n");
@@ -904,7 +922,7 @@ sub copy_vm {
             push @this_cmd, 'scp';
             push @this_cmd, $f;
             push @this_cmd, "$to:" . $CONF->backup_directory;
-            fork_cmd(10, @this_cmd);
+            fork_cmd($CONF->copy_timeout(), @this_cmd);
         }
         msg("Copy of $vhost complete\n");
     }
@@ -1001,7 +1019,8 @@ GetOptions(
     'debug!'   => \$opt_debug,
     'example'  => \$opt_example,
     'help'     => \$opt_help,
-    'manual'   => \$opt_manual
+    'manual'   => \$opt_manual,
+    'vg=s'     => \$opt_vg
 );
 
 # -- Flush output immediately
@@ -1146,6 +1165,13 @@ leave the VM shutdown.
 =item --confonly
 
 Backup only the xen configuration file and the LVM disk descriptions.
+
+=item --vg=<volume group name>
+
+For system restores the volume group to use when creating the new
+disks.  If not specified then the value lvm in xen-tools.conf is
+used.  If the value lvm value is not available then the volume
+group from the .lvm backup is used.
 
 =item --debug
 

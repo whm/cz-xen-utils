@@ -671,6 +671,9 @@ sub restore_vm {
             while (<$xt>) {
                 chomp;
                 my $inline = $_;
+                if ($inline =~ /^\s*#/xms || $inline =~ /^\s*$/xms) {
+                    next;
+                }
                 if ($inline =~ /lvm\s*=\s*(\S+)/xms) {
                     $xen_tools_vg = $1;
                     last;
@@ -679,7 +682,11 @@ sub restore_vm {
             close $xt
               or croak("ERROR: problem closing $xen_tools_conf\n");
             if ($opt_debug) {
-                dbg("xen-tools.conf vg = $xen_tools_vg");
+                if ($xen_tools_vg) {
+                    dbg("xen-tools.conf vg = $xen_tools_vg");
+                } else {
+                    dbg("lvm not found in xen-tools.conf");
+                }
             }
         }
 

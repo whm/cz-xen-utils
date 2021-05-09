@@ -10,6 +10,7 @@ use Carp;
 use File::Basename;
 use File::Copy;
 use Getopt::Long;
+use IPC::Open3;
 use IPC::Run qw( run timeout );
 use Net::DNS;
 use Net::Domain qw( hostfqdn );
@@ -26,11 +27,13 @@ my $opt_debug;
 my $opt_example;
 my $opt_help;
 my $opt_manual;
+my $opt_vg;
 my $opt_conf = '/etc/cz-xen-backup.conf';
 
 my $CONF;
 my $DEBUG_TIME = time();
-my @RCMD       = ();
+my @KRB_CMD    = ();
+my @KRB_STORE  = ();
 
 my %COMP = (
     NONE => {
@@ -125,6 +128,13 @@ sub read_conf {
         }
     );
     $CONF->define(
+        'copy_timeout',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '600'
+        }
+    );
+    $CONF->define(
         'default_domain',
         {
             ARGCOUNT => ARGCOUNT_ONE,
@@ -207,12 +217,14 @@ sub read_conf {
     }
 
     # Setup prefix for commands that require Kerberos authentication
+    @KRB_CMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
+    push @KRB_CMD, '-t';
+    push @KRB_CMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
+    push @KRB_CMD, '--';
+
     if ($CONF->backup_shared =~ /^afs$/xmsi) {
         mgs("INFO: backing using AFS\n");
-        @RCMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
-        push @RCMD, '-t';
-        push @RCMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
-        push @RCMD, '--';
+        @KRB_STORE = @KRB_CMD;
     } elsif ($CONF->backup_shared =~ /^nfs$/xmsi) {
         msg("INFO: backup using NFS\n");
     } elsif ($CONF->backup_shared =~ /^no$/xmsi) {
@@ -242,6 +254,10 @@ sub display_example_conf {
     msg("# Compression to use when creating the disk files.\n");
     msg("# Valid values are 'NONE', 'z', or 'J'\n");
     msg("compression = NONE\n");
+
+    msg("#\n");
+    msg("# Timeout value for copy operations.\n");
+    msg("copy_timeout = 900\n");
 
     msg("#\n");
     msg("# Default DNS domain to use in forming FQDNs.\n");
@@ -276,7 +292,7 @@ sub display_example_conf {
     msg("shutdown_sleep = 10\n");
 
     msg("#\n");
-    msg("# Number of shutdown attempts before aborting backup.\n");
+    msg("# Number of gentle shutdown attempts before destroying the VM.\n");
     msg("shutdown_count = 10\n");
 
     msg("#\n");
@@ -292,16 +308,44 @@ sub display_example_conf {
 }
 
 # ----------------------------------------------------------------------
+# Fork a shell command line and send the output to the parent process
+
+sub fork_cmd {
+    my ($timeout, @cmd) = @_;
+
+    my $pid;
+    my $cmd_line = 'Executing: ' . join(' ', @cmd);
+    msg("$cmd_line\n");
+    cz_syslog($cmd_line);
+    eval {
+        alarm $timeout;
+        # write to parent STDOUT and STDERR
+        $pid = open3(my $chld_in, '>&STDOUT', '>&STDERR', @cmd);
+        # retrieve exit status when child finishes
+        waitpid($pid, 0);
+        my $child_exit_status = $? >> 8;
+        alarm 0;
+    };
+    if ($@) {
+        if ($pid) {
+            kill 9, $pid;
+        }
+        my $err .= "ERROR executing:$cmd_line\n";
+        $err .= $@;
+        croak "$err\n";
+    }
+    if ($opt_debug) {
+        dbg("Command complete: $cmd_line");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
 # run shell commands
 
 sub run_cmd {
-    my ($timeout_min, $remote_req, @cmd) = @_;
+    my ($timeout_min, @cmd) = @_;
 
-    if ($remote_req) {
-        my @new_cmd = ();
-        push @new_cmd, @RCMD, @cmd;
-        @cmd = @new_cmd;
-    }
     my $in;
     my $out;
     my $err;
@@ -372,8 +416,9 @@ sub create_a_snapshot {
     push @lv_cmd, '--size', $CONF->snapshot_size;
     push @lv_cmd, '--snapshot';
     push @lv_cmd, '--name', $snapshot_name;
+    push @lv_cmd, '--yes';
     push @lv_cmd, $disk_device;
-    msg(run_cmd(20, 0, @lv_cmd));
+    fork_cmd(20, @lv_cmd);
 
     return $snapshot_device;
 }
@@ -396,7 +441,7 @@ sub backup_a_snapshot {
     push @mt_cmd, $snap_device;
     push @mt_cmd, $mount_point;
     push @mt_cmd, '-o', 'ro';
-    msg(run_cmd(10, 0, @mt_cmd));
+    fork_cmd(10, @mt_cmd);
 
     # Clean out the old backup
     for my $c (sort keys %COMP) {
@@ -416,7 +461,8 @@ sub backup_a_snapshot {
     my $tar_file = $CONF->backup_directory() . '/' . fileparse($snap_device);
     $tar_file =~ s/\-snapshot//xms;
     $tar_file .= '.' . $COMP{ $CONF->compression }{'type'};
-    my @cmd = ('tar');
+    my @cmd = ();
+    push @cmd, 'tar';
     push @cmd, '--create';
     push @cmd, '--file', $tar_file;
 
@@ -428,13 +474,13 @@ sub backup_a_snapshot {
     push @cmd, '--same-owner';
     push @cmd, './';
     my $bout = 4 * 60 * 60;
-    run_cmd($bout, 1, @cmd);
+    fork_cmd($bout, @KRB_STORE, @cmd);
     chdir('/tmp') || croak("ERROR: problem cd'ing to /tmp\n");
 
     # unmount the VM's disk
-    msg(run_cmd(10, 0, 'umount',   $mount_point));
-    msg(run_cmd(10, 0, 'rmdir',    $mount_point));
-    msg(run_cmd(10, 0, 'lvremove', '-f', $snap_device));
+    fork_cmd(10, 'umount',   $mount_point);
+    fork_cmd(10, 'rmdir',    $mount_point);
+    fork_cmd(10, 'lvremove', '-f', $snap_device);
 
     return;
 }
@@ -457,8 +503,9 @@ sub backup_vm {
         my @cmd = ();
         # copy the configuration file
         my $vm_config = "/etc/xen/${vhost}.cfg";
-        @cmd = ('cp', '-v', ${vm_config}, $CONF->backup_directory());
-        msg(run_cmd(60, 1, @cmd));
+        @cmd = ();
+        push @cmd, 'cp', '-v', ${vm_config}, $CONF->backup_directory();
+        fork_cmd(60, @KRB_STORE, @cmd);
 
         # Create file containing LVM information about the disks used
         # by the vm.
@@ -468,15 +515,16 @@ sub backup_vm {
         open(my $lh, '>', $tmp_lvm)
           or croak("ERROR: problem opening $tmp_lvm for write\n");
         for my $d (@disk_list) {
-            my $lvm_data = run_cmd(5, 0, 'lvdisplay', $d);
+            my $lvm_data = run_cmd(5, 'lvdisplay', $d);
             print $lh $lvm_data
               or die("ERROR: problem writing to $tmp_lvm");
         }
         close $lh
           or croak("ERROR: problem closing $tmp_lvm");
         my $vm_lvm = $CONF->backup_directory() . "/${vhost}.lvm";
-        @cmd = ('cp', '-v', $tmp_lvm, $vm_lvm);
-        msg(run_cmd(60, 1, @cmd));
+        @cmd = ();
+        push @cmd, 'cp', '-v', $tmp_lvm, $vm_lvm;
+        fork_cmd(60, @KRB_STORE, @cmd);
 
         next if $opt_confonly;
 
@@ -486,21 +534,26 @@ sub backup_vm {
         my $cnt        = 0;
         while ($cnt < $CONF->shutdown_count) {
             $cnt++;
-            my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
+            my $stat = run_cmd(5, '/usr/bin/cz-xen', 'show');
             if ($stat =~ /$vhost/xms) {
                 $vm_restart = 1;
                 if ($cnt > 1) {
                     msg("shutdown sleep ...\n");
                     sleep $CONF->shutdown_sleep;
                 }
-                msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'shutdown', $vhost));
+                fork_cmd(10, '/usr/bin/cz-xen', 'shutdown', $vhost);
             } else {
                 $shut_okay = 1;
                 $cnt       = $CONF->shutdown_count;
             }
         }
+        # If gentle shutdown fails then destroy the VM
         if (!$shut_okay) {
-            die("ERROR: shutdown of $vhost failed.\n");
+            fork_cmd(10, '/usr/bin/cz-xen', 'destroy', $vhost);
+            my $stat = run_cmd(5, '/usr/bin/cz-xen', 'show');
+            if ($stat =~ /$vhost/xms) {
+                die("ERROR: shutdown of $vhost failed");
+            }
         }
 
         # Create snapshotsbackup each disk
@@ -518,7 +571,7 @@ sub backup_vm {
             my $cnt = 0;
             while ($cnt < $CONF->reboot_count) {
                 $cnt++;
-                my $stat = run_cmd(5, 0, '/usr/bin/cz-xen', 'show');
+                my $stat = run_cmd(5, '/usr/bin/cz-xen', 'show');
                 if ($stat =~ /$vhost/xms) {
                     $cnt         = $CONF->reboot_count;
                     $reboot_okay = 1;
@@ -527,7 +580,7 @@ sub backup_vm {
                         msg("reboot sleep ...\n");
                         sleep $CONF->reboot_sleep;
                     }
-                    msg(run_cmd(10, 0, '/usr/bin/cz-xen', 'boot', $vhost));
+                    fork_cmd(10, '/usr/bin/cz-xen', 'boot', $vhost);
                 }
             }
             if (!$reboot_okay) {
@@ -622,28 +675,37 @@ sub restore_vm {
         }
 
         # Read the volume group from the xen-tools configuration file.
-        my $xen_tools_conf = '/etc/xen-tools/xen-tools.conf';
         my $xen_tools_vg;
-        if (-e $xen_tools_conf) {
-            open(my $xt, '<', $xen_tools_conf)
-              or die("ERROR: problem opeing $xen_tools_conf\n");
-            while (<$xt>) {
-                chomp;
-                my $inline = $_;
-                if ($inline =~ /lvm\s*=\s*(\S+)/xms) {
-                    $xen_tools_vg = $1;
-                    last;
+        if (!$opt_vg) {
+            my $xen_tools_conf = '/etc/xen-tools/xen-tools.conf';
+            if (-e $xen_tools_conf) {
+                open(my $xt, '<', $xen_tools_conf)
+                  or die("ERROR: problem opeing $xen_tools_conf\n");
+                while (<$xt>) {
+                    chomp;
+                    my $inline = $_;
+                    if ($inline =~ /^\s*#/xms || $inline =~ /^\s*$/xms) {
+                        next;
+                    }
+                    if ($inline =~ /lvm\s*=\s*(\S+)/xms) {
+                        $xen_tools_vg = $1;
+                        last;
+                    }
                 }
-            }
-            close $xt
-              or croak("ERROR: problem closing $xen_tools_conf\n");
-            if ($opt_debug) {
-                dbg("xen-tools.conf vg = $xen_tools_vg");
+                close $xt
+                  or croak("ERROR: problem closing $xen_tools_conf\n");
+                if ($opt_debug) {
+                    if ($xen_tools_vg) {
+                        dbg("xen-tools.conf vg = $xen_tools_vg");
+                    } else {
+                        dbg("lvm not found in xen-tools.conf");
+                    }
+                }
             }
         }
 
         # Copy the VM configuration file into place on the new host.
-        msg(run_cmd(30, 1, 'cp', $vm_config_new, $vm_config));
+        fork_cmd(30, @KRB_STORE, 'cp', $vm_config_new, $vm_config);
 
         # Create lvm disks for this vm
         for my $i (sort keys %lvm_list) {
@@ -670,11 +732,15 @@ sub restore_vm {
             $this_size =~ s/iB$//xms;
             my $this_vg;
             my $lvm_vg = $lvm_list{$i}{'vgname'};
-            if ($xen_tools_vg) {
-                $this_vg   = $xen_tools_vg;
-                $this_path = "/$path_dev/$xen_tools_vg/$path_disk";
+            if ($opt_vg) {
+                $this_vg = $opt_vg;
             } else {
-                $this_vg = $lvm_vg;
+                if ($xen_tools_vg) {
+                    $this_vg   = $xen_tools_vg;
+                    $this_path = "/$path_dev/$xen_tools_vg/$path_disk";
+                } else {
+                    $this_vg = $lvm_vg;
+                }
             }
             if (!$this_vg) {
                 die("ERROR: volume group not found for $this_name.");
@@ -682,7 +748,7 @@ sub restore_vm {
             }
             # If the volume group is different on this system modify
             # the paths in the configuration file.
-            if ($xen_tools_vg ne $lvm_vg) {
+            if ($this_vg ne $lvm_vg) {
                 my @xen_vm_lines = ();
                 open(my $cin, '<', $vm_config)
                   or die("ERROR: problem opening $vm_config\n");
@@ -708,14 +774,16 @@ sub restore_vm {
             push @lv_cmd, 'lvcreate';
             push @lv_cmd, "--size=$this_size";
             push @lv_cmd, "--name=$this_name";
+            push @lv_cmd, '--yes';
             push @lv_cmd, $this_vg;
-            msg(run_cmd(180, 0, @lv_cmd));
+            fork_cmd(180, @lv_cmd);
+
             if ($this_path =~ /-swap$/xms) {
                 # Create a swap partition
-                msg(run_cmd(30, 0, 'mkswap', $this_path));
+                fork_cmd(30, 'mkswap', $this_path);
             } else {
                 # Create a disk partition
-                msg(run_cmd(30, 0, 'mkfs', '-t', 'ext4', $this_path));
+                fork_cmd(30, 'mkfs', '-t', 'ext4', $this_path);
                 # Mount the VM's disk on the new Xen server.
                 my $mount_point = "/mnt/$this_name";
                 my @mopts;
@@ -733,7 +801,7 @@ sub restore_vm {
                     my $m = join(' ', @cmd);
                     dbg("Executing $m");
                 }
-                msg(run_cmd(30, 0, @cmd));
+                fork_cmd(30, @cmd);
                 if (!-e $mount_point) {
                     die("ERROR: mount point $mount_point not found");
                 }
@@ -756,7 +824,8 @@ sub restore_vm {
                     msg("ERROR: tar file not found in list $tar_list\n");
                     die("ERROR: fatal error\n");
                 }
-                my @cmd = ('tar');
+                my @cmd = ();
+                push @cmd, 'tar';
                 push @cmd, '--extract';
                 push @cmd, '--file', $tar_file;
                 push @cmd, '--auto-compress';
@@ -765,10 +834,10 @@ sub restore_vm {
                 push @cmd, '--same-owner';
                 push @cmd, './';
                 my $tout = 2 * 60 * 60;
-                msg(run_cmd($tout, 1, @cmd));
+                fork_cmd($tout, @KRB_STORE, @cmd);
                 # unmount the VM's disk
                 chdir('/tmp');
-                msg(run_cmd(30, 0, 'cz-xen', 'umount', $vhost));
+                fork_cmd(30, 'cz-xen', 'umount', $vhost);
             }
         }
 
@@ -776,7 +845,7 @@ sub restore_vm {
 
         if ($opt_bootnew) {
             # reboot the system
-            msg(run_cmd(30, 0, 'cz-xen', 'boot', $vhost));
+            fork_cmd(30, 'cz-xen', 'boot', $vhost);
         } else {
             msg("System $vhost is ready to be booted.\n");
         }
@@ -849,10 +918,11 @@ sub copy_vm {
         create_ticket_cache($CONF);
         for my $f (@file_list) {
             my @this_cmd = ();
+            push @this_cmd, @KRB_CMD;
             push @this_cmd, 'scp';
             push @this_cmd, $f;
             push @this_cmd, "$to:" . $CONF->backup_directory;
-            msg(run_cmd(10, 1, @this_cmd));
+            fork_cmd($CONF->copy_timeout(), @this_cmd);
         }
         msg("Copy of $vhost complete\n");
     }
@@ -949,7 +1019,8 @@ GetOptions(
     'debug!'   => \$opt_debug,
     'example'  => \$opt_example,
     'help'     => \$opt_help,
-    'manual'   => \$opt_manual
+    'manual'   => \$opt_manual,
+    'vg=s'     => \$opt_vg
 );
 
 # -- Flush output immediately
@@ -1094,6 +1165,13 @@ leave the VM shutdown.
 =item --confonly
 
 Backup only the xen configuration file and the LVM disk descriptions.
+
+=item --vg=<volume group name>
+
+For system restores the volume group to use when creating the new
+disks.  If not specified then the value lvm in xen-tools.conf is
+used.  If the value lvm value is not available then the volume
+group from the .lvm backup is used.
 
 =item --debug
 

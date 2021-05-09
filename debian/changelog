@@ -1,3 +1,42 @@
+cz-xen-utils (55) unstable; urgency=medium
+
+  * cz-xen-backup bug fixes.
+    - Correct handling of lvm vg discovery by ignoring comments in
+      the xen-tools.conf file.
+    - Allow the specification of the lvm vg on the command line.
+    - Correct the timeout on copy operations.  Allow the specification
+      of the timeout in the configuration file.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sun, 09 May 2021 08:20:49 +0000
+
+cz-xen-utils (54) unstable; urgency=medium
+
+  * Fork commands that do not parse the output of the the parents
+    STDERR and STDOUT.
+  * Update cz-xen-backup to attempt to destroy the VM is shutdown
+    attempts fail.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Tue, 30 Mar 2021 01:31:41 +0000
+
+cz-xen-utils (53) unstable; urgency=medium
+
+  * Update to cz-xen-backup to force the creation of lvm logical volumes
+    even if a previous remnant exists.  lvcreate will prompt if a file
+    system is detected at the same spot on the disk as the attempted
+    create.  This does not happen often, but is a blocker when a restore
+    is attempted twice in a row.  This change suppresses the prompt and
+    just proceeds.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sun, 28 Mar 2021 06:42:47 +0000
+
+cz-xen-utils (52) unstable; urgency=medium
+
+  * Add the cz-xen-backup-control script.  This is a hack to quickly
+    add the capability to backup all VMs on a system.  It will be
+    merged into cz-xen-backup at some point.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Sat, 13 Mar 2021 03:37:35 +0000
+
 cz-xen-utils (51~focal1) focal; urgency=medium
 
   * Build for ubuntu.  This is marked for focal, but it works on bionic

@@ -10,6 +10,7 @@ use Carp;
 use File::Basename;
 use File::Copy;
 use Getopt::Long;
+use IPC::Open3;
 use IPC::Run qw( run timeout );
 use Net::DNS;
 use Net::Domain qw( hostfqdn );
@@ -97,6 +98,39 @@ sub net_size2mask {
     my ($ip_cidr) = @_;
     my $block = Net::Netmask->new($ip_cidr);
     return $block->mask();
+}
+
+# ----------------------------------------------------------------------
+# Fork a shell command line and send the output to the parent process
+
+sub fork_cmd {
+    my ($timeout, @cmd) = @_;
+
+    my $pid;
+    my $cmd_line = 'Executing: ' . join(' ', @cmd);
+    msg("$cmd_line\n");
+    cz_syslog($cmd_line);
+    eval {
+        alarm $timeout;
+        # write to parent STDOUT and STDERR
+        $pid = open3(my $chld_in, '>&STDOUT', '>&STDERR', @cmd);
+        # retrieve exit status when child finishes
+        waitpid($pid, 0);
+        my $child_exit_status = $? >> 8;
+        alarm 0;
+    };
+    if ($@) {
+        if ($pid) {
+            kill 9, $pid;
+        }
+        my $err .= "ERROR executing:$cmd_line\n";
+        $err .= $@;
+        croak "$err\n";
+    }
+    if ($opt_debug) {
+        dbg("Command complete: $cmd_line");
+    }
+    return;
 }
 
 # ----------------------------------------------------------------------
@@ -756,9 +790,7 @@ sub create_vm {
     push @cmd, "--arch=$DIST{$opt_id}{'arch'}";
     msg("Be patient this takes time ...\n");
     my $create_timeout = 60 * $CONF->timeout_new();
-    my $out            = run_cmd($create_timeout, @cmd);
-
-    msg($out);
+    fork_cmd($create_timeout, @cmd);
 
     # Look for files to copy from dom0 to domu
     my %file_list   = ();
@@ -814,16 +846,14 @@ sub delete_vm {
     for my $s (@lines) {
         if ($s =~ /^$vhost\s/xms) {
             @cmd = ('xl', 'destroy', $vhost);
-            $out = run_cmd($cmd_timeout, @cmd);
-            msg($out);
+            fork_cmd($cmd_timeout, @cmd);
             last;
         }
     }
 
     # delete the vm
     my @cmd = ('/usr/bin/xen-delete-image', ${vhost});
-    my $out = run_cmd($cmd_timeout, @cmd);
-    msg($out);
+    fork_cmd($cmd_timeout, @cmd);
 
     if ($@) {
         msg('ERROR: Problem executing:' . join(q{ }, @cmd));
@@ -1049,7 +1079,7 @@ sub get_keytab {
     if ($opt_debug) {
         dbg('Executing: ' . join(' ', @cl));
     }
-    run_cmd(60, @cl);
+    fork_cmd(60, @cl);
 
     destroy_ticket_cache($CONF);
 
@@ -1080,15 +1110,7 @@ sub list_freedisk_space {
 
     my @cmd         = ('/sbin/vgdisplay');
     my $cmd_timeout = 60 * $CONF->timeout_list();
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    my @out_lines   = split /\n/, $out;
-    for my $z (@out_lines) {
-        if ($z =~ /Name/) {
-            msg("\n$z\n");
-        } elsif ($z =~ /Size/) {
-            msg("$z\n");
-        }
-    }
+    fork_cmd($cmd_timeout, @cmd);
     return;
 }
 
@@ -1099,15 +1121,8 @@ sub list_freemem {
 
     my @cmd         = ('/usr/sbin/xl', 'info');
     my $cmd_timeout = 60 * $CONF->timeout_list();
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    my @lines       = split /\n/, $out;
+    fork_cmd($cmd_timeout, @cmd);
     msg("Memory units are megabytes.\n");
-    msg("\n");
-    for my $l (@lines) {
-        if ($l =~ /memory/) {
-            msg("$l\n");
-        }
-    }
     return;
 }
 
@@ -1118,11 +1133,7 @@ sub list_info {
 
     my @cmd         = ('/usr/sbin/xl', 'info');
     my $cmd_timeout = 60 * $CONF->timeout_list();
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    my @out_lines   = split /\n/, $out;
-    for my $z (@out_lines) {
-        msg("$z\n");
-    }
+    fork_cmd($cmd_timeout, @cmd);
     return;
 }
 
@@ -1255,8 +1266,7 @@ sub mount_vm_disk {
         push @cmd, '-o', $opt_moptions;
     }
     my $cmd_timeout = 60 * $CONF->timeout_mount();
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    msg($out);
+    fork_cmd($cmd_timeout, @cmd);
 
     return $vm_mount_point;
 }
@@ -1283,8 +1293,7 @@ sub umount_vm_disk {
     # Dismount the disk
     my @cmd            = ('umount', $vm_mount_point);
     my $umount_timeout = 60 * $CONF->timeout_mount();
-    my $out            = run_cmd($umount_timeout, @cmd);
-    msg($out);
+    fork_cmd($umount_timeout, @cmd);
     rmdir($vm_mount_point)
       or croak("ERROR: problem deleting mount point $vm_mount_point\n");
 
@@ -1298,8 +1307,7 @@ sub xtool_action {
 
     my @cmd         = ('xl', $action);
     my $cmd_timeout = 60 * $CONF->timeout_action;
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    msg($out);
+    fork_cmd($cmd_timeout, @cmd);
     return;
 }
 
@@ -1323,8 +1331,7 @@ sub xtool_host_action {
     # Perform the requested action
     my @cmd         = ('xl', $action, $vhost);
     my $cmd_timeout = 60 * $CONF->timeout_action();
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    msg($out);
+    fork_cmd($cmd_timeout, @cmd);
     return;
 }
 
@@ -1340,8 +1347,7 @@ sub xtool_conf_action {
 
     my @cmd         = ('xl', 'create', $conf_file);
     my $cmd_timeout = 60 * $CONF->timeout_action();
-    my $out         = run_cmd($cmd_timeout, @cmd);
-    msg($out);
+    fork_cmd($cmd_timeout, @cmd);
     return;
 }
 

@@ -4,7 +4,12 @@
 
 use Test::More qw( no_plan );
 
-my @script_list = ('cz-xen', 'cz-xen-backup', 'cz-console');
+my @script_list = (
+    'cz-xen',
+    'cz-xen-backup',
+    'cz-xen-backup-control',
+    'cz-console',
+);
 
 for my $script (@script_list) {
 

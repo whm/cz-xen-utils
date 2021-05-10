@@ -1,3 +1,10 @@
+cz-xen-utils (56) unstable; urgency=medium
+
+  * Correct k5start command line used in backup copy operations
+    to not attempt to obtain AFS tokens.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Mon, 10 May 2021 16:36:26 +0000
+
 cz-xen-utils (55) unstable; urgency=medium
 
   * cz-xen-backup bug fixes.

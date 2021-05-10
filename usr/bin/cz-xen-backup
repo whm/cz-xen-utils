@@ -218,7 +218,9 @@ sub read_conf {
 
     # Setup prefix for commands that require Kerberos authentication
     @KRB_CMD = ('/usr/bin/k5start', '-f', $CONF->krb_keytab);
-    push @KRB_CMD, '-t';
+    if ($CONF->backup_shared =~ /^afs$/xmsi) {
+        push @KRB_CMD, '-t';
+    }
     push @KRB_CMD, '-u', $CONF->krb_principal . '@' . $CONF->krb_realm;
     push @KRB_CMD, '--';
 

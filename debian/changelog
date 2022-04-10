@@ -2,6 +2,7 @@ cz-xen-utils (57) unstable; urgency=medium
 
   * Add support to allow backup operations the groups "ALL", "RUNNING",
     or "SHUTDOWN" of virtual machines.
+  * Add the --bridge switch to cz-xen.
 
  -- Bill MacAllister <bill@ca-zephyr.org>  Sun, 10 Apr 2022 21:05:12 +0000
 

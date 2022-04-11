@@ -1,3 +1,10 @@
+cz-xen-utils (58) unstable; urgency=medium
+
+  * Revert some of the changes to cz-xen-backup to correct some
+    bugs in the copy and restore functions.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Mon, 11 Apr 2022 07:57:19 +0000
+
 cz-xen-utils (57) unstable; urgency=medium
 
   * Add support to allow backup operations the groups "ALL", "RUNNING",

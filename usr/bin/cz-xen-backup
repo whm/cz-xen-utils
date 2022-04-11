@@ -32,6 +32,7 @@ my $opt_conf = '/etc/cz-xen-backup.conf';
 
 my $CONF;
 my $DEBUG_TIME = time();
+my %VM_LIST    = ();
 my @KRB_CMD    = ();
 my @KRB_STORE  = ();
 
@@ -125,6 +126,13 @@ sub read_conf {
         {
             ARGCOUNT => ARGCOUNT_ONE,
             DEFAULT  => 'NONE'
+        }
+    );
+    $CONF->define(
+        'xen_cfg_dir',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => '/etc/xen'
         }
     );
     $CONF->define(
@@ -253,6 +261,10 @@ sub display_example_conf {
     msg("backup_directory = /srv/xen-backup\n");
 
     msg("#\n");
+    msg("# Directory that holds xen vm configuations.\n");
+    msg("xen_cfg_dir = /etc/xen\n");
+
+    msg("#\n");
     msg("# Compression to use when creating the disk files.\n");
     msg("# Valid values are 'NONE', 'z', or 'J'\n");
     msg("compression = NONE\n");
@@ -365,6 +377,68 @@ sub run_cmd {
         dbg($out);
     }
     return $out;
+}
+
+# ----------------------------------------------------------------------
+# Return the properties virtual machines on this host
+
+sub get_vm_properties {
+    my @params = @_;
+
+    my @cmd   = ('xl', 'list');
+    my $out   = run_cmd(60, @cmd);
+    my @lines = split /\n/, $out;
+    for my $s (@lines) {
+        my @bits = split(/\s/, $s);
+        if ($bits[0] =~ /[.]/xms) {
+            $VM_LIST{ $bits[0] } = 1;
+        }
+    }
+
+    opendir(my $dir, $CONF->xen_cfg_dir())
+      or croak('ERROR: problem opening ' . $CONF->xen_cfg_dir() . "\n");
+    while (my $file = readdir($dir)) {
+        if ($file =~ /[.]cfg$/xms) {
+            my $a_host = $file;
+            $a_host =~ s/[.]cfg$//xms;
+            if (!$VM_LIST{$a_host}) {
+                $VM_LIST{$a_host} = 2;
+            }
+        }
+    }
+    closedir($dir);
+    return;
+}
+
+# ----------------------------------------------------------------------
+# Return a select list of virtual machines
+#
+# If there is only one element in the params array and the value is
+# "ALL", "RUNNING", or "SHUTDOWN" then a group list is returned.
+
+sub get_vm_list {
+    my @params = @_;
+
+    my @vhost_list = ();
+    if (scalar(@params) == 1 && $params[0] =~ /^(ALL|RUNNING|SHUTDOWN)$/xms) {
+        my $group = $1;
+        for my $vm (sort keys %VM_LIST) {
+            if ($group eq 'ALL') {
+                push @vhost_list, $vm;
+            } elsif ($group eq 'RUNNING' && $VM_LIST{$vm} == 1) {
+                push @vhost_list, $vm;
+            } elsif ($group eq 'SHUTDOWN' && $VM_LIST{$vm} == 2) {
+                push @vhost_list, $vm;
+            }
+        }
+    } else {
+        @vhost_list = host_fqdn(@params);
+        for my $v (@vhost_list) {
+            validate_conf($v);
+        }
+    }
+
+    return @vhost_list;
 }
 
 # ----------------------------------------------------------------------
@@ -497,10 +571,9 @@ sub backup_a_snapshot {
 sub backup_vm {
     my @params = @_;
 
-    my @vhost_list = host_fqdn(@params);
-    for my $v (@vhost_list) {
-        validate_conf($v);
-    }
+    my @vhost_list = get_vm_list(@params);
+
+    # Process the host list
     for my $vhost (@vhost_list) {
         my @cmd = ();
         # copy the configuration file
@@ -608,7 +681,7 @@ sub backup_vm {
 sub restore_vm {
     my @params = @_;
 
-    my @vhost_list = host_fqdn(@params);
+    my @vhost_list = get_vm_list(@params);
 
     # Perform validation first before we do anything
     for my $vhost (@vhost_list) {
@@ -871,7 +944,7 @@ sub copy_vm {
         die("ERROR: no destination host specified.\n");
     }
 
-    my @vhost_list = host_fqdn(@params[1 .. $#params]);
+    my @vhost_list = get_vm_list(@params[1 .. $#params]);
 
     # Make sure we have all of the files that we expect before we
     # start.  This check is to prevent the start of a series of
@@ -977,7 +1050,7 @@ sub migrate_vm {
         die("ERROR: missing destination host.\n");
     }
 
-    my @vhost_list = host_fqdn(@params[1 .. $#params]);
+    my @vhost_list = get_vm_list(@params[1 .. $#params]);
     for my $v (@vhost_list) {
         validate_conf($v);
     }
@@ -1050,6 +1123,7 @@ if ($action ne 'list' && scalar(@params) == 0) {
 
 read_conf();
 cz_init_tools(basename($0), $opt_debug);
+get_vm_properties();
 
 # Do something
 if    ($action eq 'backup')  { backup_vm(@params); }
@@ -1087,6 +1161,12 @@ cz-xen-backup
 
 Backup and restore xen virtual machines.  The restore can be to a new
 name, which is a way to clone a system.
+
+The script will process multiple virtual systems.  If a single VM
+specification is given and the specification is one of "ALL",
+"RUNNING", or "SHUTDOWN" a list of hosts will be processed from vms on
+the xen host.  Hosts that are shutdown will be rebooted unless the
+--nobootold switch is specified.
 
 =head1 ACTIONS
 

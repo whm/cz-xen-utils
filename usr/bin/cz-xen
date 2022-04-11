@@ -20,6 +20,7 @@ use Pod::Usage;
 use CZ::Xentools;
 use strict;
 
+my $opt_bridge;
 my $opt_confirm;
 my $opt_cpu = 2;
 my $opt_debug;
@@ -763,6 +764,9 @@ sub create_vm {
     push @cmd, "--template=$tmpl";
     push @cmd, "--config=$config";
 
+    if ($opt_bridge) {
+        push @cmd, "--bridge=$opt_bridge";
+    }
     if ($opt_ip eq 'dhcp') {
         push @cmd, "--dhcp";
     } else {
@@ -1356,6 +1360,7 @@ sub xtool_conf_action {
 ##############################################################################
 
 GetOptions(
+    'bridge=s'   => \$opt_bridge,
     'confirm'    => \$opt_confirm,
     'cpu=i'      => \$opt_cpu,
     'debug'      => \$opt_debug,
@@ -1647,6 +1652,10 @@ Dismount a VM's disk.
 The host name of the vm.  Can be fully qualified name.  If not
 a fully qualified name then the domain from the configuration
 file set used.
+
+=item --bridge=<bridge identifier>
+
+The network bridge identifier for Xen hosts that have trunked networks.
 
 =item --cpu=<number of CPUs>
 

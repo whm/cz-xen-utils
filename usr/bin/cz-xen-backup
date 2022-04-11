@@ -681,7 +681,7 @@ sub backup_vm {
 sub restore_vm {
     my @params = @_;
 
-    my @vhost_list = get_vm_list(@params);
+    my @vhost_list = host_fqdn(@params);
 
     # Perform validation first before we do anything
     for my $vhost (@vhost_list) {
@@ -944,7 +944,7 @@ sub copy_vm {
         die("ERROR: no destination host specified.\n");
     }
 
-    my @vhost_list = get_vm_list(@params[1 .. $#params]);
+    my @vhost_list = host_fqdn(@params[1 .. $#params]);
 
     # Make sure we have all of the files that we expect before we
     # start.  This check is to prevent the start of a series of

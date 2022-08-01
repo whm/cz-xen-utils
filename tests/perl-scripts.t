@@ -39,6 +39,14 @@ for my $script (@script_list) {
     push @cmd, $s;
     system(@cmd);
 
+    my $e = "../usr/bin/${script}.ERR";
+    if (-e $e) {
+        print("ERR file:\n");
+        system("ls -l $e");
+        system("cat $e");
+        fail("$script ERR file found");
+    }
+    
     @cmd = ('diff', '-u', $s, $t);
     if (system(@cmd) == 0) {
         pass("$script is Tidy");

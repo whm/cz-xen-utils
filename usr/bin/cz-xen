@@ -1338,7 +1338,7 @@ sub list_vms {
 # ----------------------------------------------------------------------
 # Manage snapshots, i.e. list them or delete them
 
-sub mount_vm_disk {
+sub manage_snapshots {
     my ($action, $frag) = @_;
     my %lvols       = get_lvols_hash();
     my $cnt         = 0;

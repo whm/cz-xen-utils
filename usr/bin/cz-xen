@@ -1344,7 +1344,7 @@ sub manage_snapshots {
     my $cnt         = 0;
     my $cmd_timeout = 60 * $CONF->timeout_delete();
     for my $disk (sort keys %lvols) {
-        if ($disk =~ /snap$/xms) {
+        if ($disk =~ /snapshot$/xms) {
             my $this_disk;
             if ($frag) {
                 if ($disk =~ /$frag/) {

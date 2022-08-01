@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2012-2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2021 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2022 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Script to manage xen virtual hosts
 
@@ -335,6 +335,13 @@ sub read_conf {
         }
     );
     $CONF->define(
+        'use_old_xen_delete_image',
+        {
+            ARGCOUNT => ARGCOUNT_ONE,
+            DEFAULT  => 0
+        }
+    );
+    $CONF->define(
         'xen_cfg_dir',
         {
             ARGCOUNT => ARGCOUNT_ONE,
@@ -494,6 +501,10 @@ sub example_conf {
     msg("timeout_mount = 2\n");
     msg("timeout_new = 30\n");
     msg("#\n");
+    msg("# Use old xen-delete-image syntax.  The syntax changed at 4.14\n");
+    msg("# 0 is false, and not zero is true.\n");
+    msg("use_old_xen_delete_image = 0\n");
+    msg("#\n");
     msg("# Xen configuration directory\n");
     msg("xen_cfg_dir = /etc/xen\n");
     msg("#\n");
@@ -579,6 +590,88 @@ sub copy_dom0_files {
     }
 
     return;
+}
+
+# ----------------------------------------------------------------------
+# Given a VM configuration file parse out the disk entries and return
+# them as an array.
+
+sub get_vm_disks {
+    my ($vm_conf) = @_;
+
+    # Read in the configuration pulling out the disk entries.
+    open(my $vm_conf_fd, '<', $vm_conf)
+      or die("ERROR: problem opening $vm_conf\n");
+    my @dev_list = ();
+    my $disk_line;
+    while (<$vm_conf_fd>) {
+        chomp;
+        my $inline = $_;
+        if ($disk_line && $inline =~ s/\].*//xms) {
+            $disk_line .= ']';
+            last;
+        }
+        if ($disk_line) {
+            $disk_line .= $inline;
+        } else {
+            if ($inline =~ /(disk\s*=.*)/xms) {
+                $disk_line = $1;
+            }
+        }
+    }
+    close $vm_conf_fd
+      or croak("ERROR: problem closing $vm_conf\n");
+    if (!$disk_line) {
+        print("no disks found\n");
+        exit;
+    }
+
+    # Stripe spaces and disk array syntax elements
+    my $disk_list = $disk_line;
+    $disk_list =~ s/\s+//xmsg;
+    $disk_list =~ s/^disk=\[//xms;
+    $disk_list =~ s/\]$//xms;
+
+    # Parse the disk specifications
+    my @disks = ();
+    while ($disk_list) {
+        my $quote = substr($disk_list, 0, 1);
+        if ($disk_list =~ /^$quote phy: (.*?) $quote (.*)/xms) {
+            my $this_disk = $1;
+            $disk_list = $2;
+            $this_disk =~ s/,.*//xms;
+            $disk_list =~ s/^,//xms;
+            push @disks, $this_disk;
+        } else {
+            print("Unable to parse disk list from $vm_conf\n");
+            exit 1;
+        }
+    }
+
+    return @disks;
+}
+
+# ----------------------------------------------------------------------
+# Create a hash of the physical devices for logical volumes on this
+# system.
+
+sub get_lvols_hash {
+    my %disk_hash = ();
+    my @cmd       = ('lvdisplay');
+    my $out       = run_cmd(60, @cmd);
+    my @lines     = split(/\n/, $out);
+    my $this_disk;
+    for my $a (@lines) {
+        if ($a =~ /LV\s+ Path\s+ (.*)/xms) {
+            $this_disk = $1;
+            $disk_hash{$this_disk} = 'UNKNOWN-VOLUME-GROUP';
+        }
+        if ($a =~ /VG\s+ Name\s+ (.*)/xms) {
+            my $this_vol = $1;
+            $disk_hash{$this_disk} = $this_vol;
+        }
+    }
+    return %disk_hash;
 }
 
 ##############################################################################
@@ -838,7 +931,7 @@ sub delete_vm {
     }
 
     # Make sure we know what to delete
-    validate_xen_conf($vhost);
+    my $vm_conf = validate_xen_conf($vhost);
 
     # set timeout for command execution
     my $cmd_timeout = 60 * $CONF->timeout_delete();
@@ -855,13 +948,43 @@ sub delete_vm {
         }
     }
 
-    # delete the vm
-    my @cmd = ('/usr/bin/xen-delete-image', ${vhost});
-    fork_cmd($cmd_timeout, @cmd);
+    # Use the old syntaxt for xen-delete-image.  This allows older
+    # systems to use newer cz-xen versions.
+    if ($CONF->use_old_xen_delete_image()) {
+        my @cmd = ('/usr/bin/xen-delete-image', ${vhost});
+        fork_cmd($cmd_timeout, @cmd);
+        if ($@) {
+            msg('ERROR: Problem executing:' . join(q{ }, @cmd));
+            croak($@);
+        }
+        return;
+    }
 
-    if ($@) {
-        msg('ERROR: Problem executing:' . join(q{ }, @cmd));
-        croak($@);
+    # The new xen-delete-image command supports several disk
+    # technologies.  Start with support for lvm.
+    my @disks = get_vm_disks($vm_conf);
+    my %lvols = get_lvols_hash();
+    my $vg;
+    for my $disk (@disks) {
+        if ($lvols{$disk}) {
+            if ($lvols{$disk} eq 'UNKNOWN-VOLUME-GROUP') {
+                msg("WARNING: skipping $disk, unknown volume group\n");
+                next;
+            }
+            if (!$vg) {
+                $vg = $lvols{$disk};
+            } elsif ($vg ne $lvols{$disk}) {
+                msg("WARNING: skipping ambigous volume group $lvols{$disk}\n");
+                next;
+            }
+        }
+    }
+    if ($vg) {
+        my @cmd_lvm = ('xen-delete-image', "--lvm=$vg", "--host=$vhost");
+        my $out     = run_cmd($cmd_timeout, @cmd_lvm);
+        msg("$out\n");
+    } else {
+        msg("INFO: volume group not found assuming local disk storage\n");
     }
 
     return;
@@ -1213,6 +1336,44 @@ sub list_vms {
 }
 
 # ----------------------------------------------------------------------
+# Manage snapshots, i.e. list them or delete them
+
+sub mount_vm_disk {
+    my ($action, $frag) = @_;
+    my %lvols       = get_lvols_hash();
+    my $cnt         = 0;
+    my $cmd_timeout = 60 * $CONF->timeout_delete();
+    for my $disk (sort keys %lvols) {
+        if ($disk =~ /snap$/xms) {
+            my $this_disk;
+            if ($frag) {
+                if ($disk =~ /$frag/) {
+                    $this_disk = $disk;
+                }
+            } else {
+                $this_disk = $disk;
+            }
+            if ($this_disk) {
+                $cnt++;
+                if ($action eq 'delete') {
+                    my @cmd_lvm = ('lvremove', '-y', $this_disk);
+                    my $out     = run_cmd($cmd_timeout, @cmd_lvm);
+                    msg("$out\n");
+                } else {
+                    msg("$this_disk\n");
+                }
+            }
+        }
+    }
+    if ($cnt == 0) {
+        msg("No snapshots found.\n");
+    } else {
+        msg("$cnt snapshots found.\n");
+    }
+    return;
+}
+
+# ----------------------------------------------------------------------
 # Mount the vm's disk
 
 sub mount_vm_disk {
@@ -1325,7 +1486,8 @@ sub xtool_host_action {
         pod2usage(-verbose => 0);
     }
 
-    # All destroys to be forced when the configuration file is missing.
+    # All destroys need to be forced when the configuration file is
+    # missing.
     if ($opt_force && $action eq 'destroy') {
         msg("INFO: Force destroy'ing $vhost");
     } else {
@@ -1474,8 +1636,10 @@ elsif ($action eq 'listids')   { list_ids(); }
 elsif ($action eq 'mount')     { mount_vm_disk($vhost); }
 elsif ($action eq 'new')       { create_vm($vhost); }
 elsif ($action eq 'reboot')    { xtool_host_action($vhost, $action); }
+elsif ($action eq 'rmsnaps')   { manage_snapshots('delete', $vhost); }
 elsif ($action eq 'show')      { xtool_action('list'); }
 elsif ($action eq 'shutdown')  { xtool_host_action($vhost, $action); }
+elsif ($action eq 'snaps')     { manage_snapshots('', $vhost); }
 elsif ($action eq 'umount')    { umount_vm_disk($vhost); }
 else {
     warn "Unknown action ($action)\n";
@@ -1510,8 +1674,10 @@ cz-xen - Manage Xen Virtual Machines
      cz-xen mount <vm-name> [<mount-options>]
      cz-xen new <vm-name>
      cz-xen reboot <vm-name>
+     cz-xen rmsnaps [<fragment>]
      cz-xen show
      cz-xen shutdown <vm-name>
+     cz-xen snaps [<fragment>]
      cz-xen umount <vm-name>
 
 =head1 DESCRIPTION
@@ -1629,6 +1795,11 @@ Create a new virtual machine.
 
 Reboot a virtual machine.
 
+=item rmsnaps [<fragment>]
+
+Remove LVM snapshots.  If a <fragment> is not specified then all 
+snaps are removed.
+
 =item show
 
 Show the currently executing virtual machines.
@@ -1636,6 +1807,11 @@ Show the currently executing virtual machines.
 =item shutdown <vm-name>
 
 Shutdown a virtual machine gracefully.
+
+=item snaps [<fragment>]
+
+Display LVM snapshots.  If a <fragment> is not specified then all 
+snaps are displayed.
 
 =item umount <vm-name>
 
@@ -1776,6 +1952,6 @@ This software was developed for use at Stanford University 2012-2014.
 All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2021.  All rights reserved.
+2015-2022.  All rights reserved.
 
 =cut

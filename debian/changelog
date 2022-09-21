@@ -1,3 +1,10 @@
+cz-xen-utils (61) unstable; urgency=medium
+
+  * Add configuration parameter to allow the exclusion of hosts from group
+    processing of ALL, RUNNING, and SHUTDOWN guests by cz-xen-backup.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Wed, 21 Sep 2022 23:43:01 +0000
+
 cz-xen-utils (60) unstable; urgency=medium
 
   * Correct search for LVM snapshots.

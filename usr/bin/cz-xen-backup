@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
 # Copyright 2014 Board of Trustees, Leland Stanford Jr. University
-# Copyright 2015-2021 Bill MacAllister <bill@ca-zephyr.org>
+# Copyright 2015-2022 Bill MacAllister <bill@ca-zephyr.org>
 #
 # Script to backup xen virtual hosts
 
@@ -149,6 +149,7 @@ sub read_conf {
             DEFAULT  => '.ca-zephyr.org'
         }
     );
+    $CONF->define('group_exclude', { ARGCOUNT => ARGCOUNT_LIST });
     $CONF->define(
         'krb_keytab',
         {
@@ -278,7 +279,13 @@ sub display_example_conf {
     msg("default_domain = .ca-zephyr.internal\n");
 
     msg("#\n");
-    msg("# Keytab to use when executing remctl annd copy ssh operations\n");
+    msg("# Exclusion regular expressions used in forming a guest list\n");
+    msg("# when 'ALL', 'RUNNING', or 'SHUTDOWN' are specified.\n");
+    msg("# group_exclude = ^someguest\n");
+    msg("# group_exclude = console$\n");
+
+    msg("#\n");
+    msg("# Keytab to use when executing remctl and copy ssh operations\n");
     msg("krb_keytab = /etc/krb5.keytab\n");
 
     msg("#\n");
@@ -423,6 +430,11 @@ sub get_vm_list {
     if (scalar(@params) == 1 && $params[0] =~ /^(ALL|RUNNING|SHUTDOWN)$/xms) {
         my $group = $1;
         for my $vm (sort keys %VM_LIST) {
+            for my $regex (@{ $CONF->group_exclude }) {
+                if ($vm =~ /$regex/xms) {
+                    next;
+                }
+            }
             if ($group eq 'ALL') {
                 push @vhost_list, $vm;
             } elsif ($group eq 'RUNNING' && $VM_LIST{$vm} == 1) {
@@ -1289,6 +1301,6 @@ This software was originally developed for use at Stanford University
 2012-2014.  All rights reserved.
 
 Modifications to the software have been made by Bill MacAllister,
-2015-2021.  All rights reserved.
+2015-2022.  All rights reserved.
 
 =cut

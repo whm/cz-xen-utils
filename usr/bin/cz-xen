@@ -1868,7 +1868,7 @@ The diskid of the disk to mount.  Defaults to "-disk".
 
 =item --force
 
-Force destroy when a Xen guest.  This is required when the guest's
+Force destroy a Xen guest.  This is required when the guest's
 configuration file has been deleted, but the guest is still running.
 
 =item --gateway=<ip address>

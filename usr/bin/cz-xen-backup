@@ -20,6 +20,7 @@ use POSIX;
 use CZ::Xentools;
 use strict;
 
+my $opt_backup  = 1;
 my $opt_bootold = 1;
 my $opt_bootnew;
 my $opt_confonly;
@@ -27,6 +28,7 @@ my $opt_debug;
 my $opt_example;
 my $opt_help;
 my $opt_manual;
+my $opt_verbose;
 my $opt_vg;
 my $opt_conf = '/etc/cz-xen-backup.conf';
 
@@ -430,10 +432,15 @@ sub get_vm_list {
     if (scalar(@params) == 1 && $params[0] =~ /^(ALL|RUNNING|SHUTDOWN)$/xms) {
         my $group = $1;
         for my $vm (sort keys %VM_LIST) {
+            my $skip;
             for my $regex (@{ $CONF->group_exclude }) {
                 if ($vm =~ /$regex/xms) {
-                    next;
+                    $skip = 1;
+                    last;
                 }
+            }
+            if ($skip) {
+                next;
             }
             if ($group eq 'ALL') {
                 push @vhost_list, $vm;
@@ -448,6 +455,16 @@ sub get_vm_list {
         for my $v (@vhost_list) {
             validate_conf($v);
         }
+    }
+    if ($opt_verbose || !$opt_backup) {
+        msg("The following guests will be backed up\n");
+        for my $v (sort(@vhost_list)) {
+            msg("  $v\n");
+        }
+    }
+    if (!$opt_backup) {
+        msg("INFO: backups suppressed with --nobackup, exiting\n");
+        exit;
     }
 
     return @vhost_list;
@@ -1099,6 +1116,7 @@ sub migrate_vm {
 ##############################################################################
 
 GetOptions(
+    'backup!'  => \$opt_backup,
     'bootold!' => \$opt_bootold,
     'bootnew!' => \$opt_bootnew,
     'conf=s'   => \$opt_conf,
@@ -1107,6 +1125,7 @@ GetOptions(
     'example'  => \$opt_example,
     'help'     => \$opt_help,
     'manual'   => \$opt_manual,
+    'verbose'  => \$opt_verbose,
     'vg=s'     => \$opt_vg
 );
 
@@ -1240,6 +1259,11 @@ specified.
 
 The host name of the Xen dom0 system to copy a backup to.
 
+=item --backup
+
+The default is to perform the backups.  Using --nobackup will display
+what hosts will be backup and exit without performing any actions.
+
 =item --conf=<file path>
 
 The configuration file to use.  If none is specified then then the
@@ -1259,6 +1283,10 @@ leave the VM shutdown.
 =item --confonly
 
 Backup only the xen configuration file and the LVM disk descriptions.
+
+=item --verbose
+
+Display additional messages.
 
 =item --vg=<volume group name>
 

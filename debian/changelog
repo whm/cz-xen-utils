@@ -4,6 +4,10 @@ cz-xen-utils (61) unstable; urgency=medium
     processing of ALL, RUNNING, and SHUTDOWN guests by cz-xen-backup.
   * Add the --vg switch to cz-xen to allow the specification of the LVM
     volume group when creating a xen guest.
+  * Add the --backup switch to cz-xen-backup.  The default is to perform
+    the backups.  If --nobackup is specified then a list of guests to
+    be backed will be displayed without performing any backups.
+  * Add the --verbose switch to cz-xen-backup.
 
  -- Bill MacAllister <bill@ca-zephyr.org>  Wed, 21 Sep 2022 23:43:01 +0000
 

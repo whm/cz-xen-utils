@@ -26,7 +26,6 @@ for my $script (@script_list) {
     if (!ok($out =~ /^Usage/, "$script Help")) {
         `$cmd --help`;
     }
-
 }
 
 exit;

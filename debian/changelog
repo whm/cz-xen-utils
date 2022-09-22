@@ -2,6 +2,8 @@ cz-xen-utils (61) unstable; urgency=medium
 
   * Add configuration parameter to allow the exclusion of hosts from group
     processing of ALL, RUNNING, and SHUTDOWN guests by cz-xen-backup.
+  * Add the --vg switch to cz-xen to allow the specification of the LVM
+    volume group when creating a xen guest.
 
  -- Bill MacAllister <bill@ca-zephyr.org>  Wed, 21 Sep 2022 23:43:01 +0000
 

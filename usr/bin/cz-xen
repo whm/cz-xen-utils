@@ -41,6 +41,7 @@ my $opt_running;
 my $opt_setup = '/etc/cz-xen-setup.conf';
 my $opt_swapsize;
 my $opt_verbose;
+my $opt_vg;
 
 my $CONF;
 my %DIST;
@@ -857,6 +858,9 @@ sub create_vm {
     push @cmd, "--template=$tmpl";
     push @cmd, "--config=$config";
 
+    if ($opt_vg) {
+        push @cmd, "--lvm=$opt_vg";
+    }
     if ($opt_bridge) {
         push @cmd, "--bridge=$opt_bridge";
     }
@@ -1542,7 +1546,8 @@ GetOptions(
     'running'    => \$opt_running,
     'setup=s'    => \$opt_setup,
     'swapsize=s' => \$opt_swapsize,
-    'verbose'    => \$opt_verbose
+    'verbose'    => \$opt_verbose,
+    'vg'         => \$opt_vg
 ) or die("ERROR: invalid command line arguments\n");
 
 # Flush output immediately
@@ -1929,16 +1934,21 @@ The size of the swap file.
 
 =item --verbose
 
-We applicable display additional information.  Currently only affects
-the output of the list command.
+When applicable display additional information.  Currently only
+affects the output of the list command.
+
+=item --vg=<volume group>
+
+The LVM volume group to use when creating a VM.  If not specified
+then the value from the xen-tools configuration is used.
 
 =back
 
 =head1 EXAMPLE
 
-Create a Ubuntu bionic virtual machine:
+Create a Ubuntu focal xen guest:
 
-    cz-xen new somehost --disk=10Gb --memory=500Mb --id=focal
+    cz-xen new somehost --disk=32Gb --memory=1500Mb --id=focal
 
 =head1 AUTHOR
 

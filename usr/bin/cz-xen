@@ -41,7 +41,7 @@ my $opt_running;
 my $opt_setup = '/etc/cz-xen-setup.conf';
 my $opt_swapsize;
 my $opt_verbose;
-my $opt_vg;
+my $opt_vg = 'vg_xen';
 
 my $CONF;
 my %DIST;
@@ -1547,7 +1547,7 @@ GetOptions(
     'setup=s'    => \$opt_setup,
     'swapsize=s' => \$opt_swapsize,
     'verbose'    => \$opt_verbose,
-    'vg'         => \$opt_vg
+    'vg=s'       => \$opt_vg
 ) or die("ERROR: invalid command line arguments\n");
 
 # Flush output immediately

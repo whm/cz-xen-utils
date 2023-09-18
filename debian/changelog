@@ -1,3 +1,10 @@
+cz-xen-utils (62) unstable; urgency=medium
+
+  * Correct the --vg switch and default to vg_xen if not specified on the
+    command line.
+
+ -- Bill MacAllister <bill@ca-zephyr.org>  Mon, 18 Sep 2023 07:38:07 -0700
+
 cz-xen-utils (61) unstable; urgency=medium
 
   * Add configuration parameter to allow the exclusion of hosts from group
